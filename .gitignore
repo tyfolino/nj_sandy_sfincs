@@ -1,0 +1,16 @@
+# Model output (large, root-owned after Docker run)
+model/
+
+# Data (large rasters)
+data/
+
+# Jupyter checkpoints
+.ipynb_checkpoints/
+**/.ipynb_checkpoints/
+
+# Python
+__pycache__/
+*.py[cod]
+
+# Logs
+*.log

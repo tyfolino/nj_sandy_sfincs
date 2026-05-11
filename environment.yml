@@ -1,0 +1,15 @@
+name: nj-sfincs
+channels:
+  - conda-forge
+dependencies:
+  - python=3.14
+  - hydromt_sfincs
+  - jupyter
+  - matplotlib
+  - geopandas
+  - rasterio
+  - xarray
+  - netcdf4
+  - pyproj
+  - cdsapi        # for GTSM/ERA5 download from Copernicus
+  - hydromt
