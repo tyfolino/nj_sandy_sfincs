@@ -1,33 +1,48 @@
 """
 Download observed water levels at NOAA CO-OPS gauges spanning the NJ coast
-during Hurricane Sandy and write a hydromt_sfincs GeoDataset NetCDF that
-can replace the GTSM boundary forcing.
+during Hurricane Sandy and write hydromt_sfincs GeoDataset NetCDFs.
 
-Output schema matches `gtsm_nj_2012_10_ready.nc`:
+Writes TWO files:
+  noaa_sandy_nj.nc          forcing — only gauges with a COMPLETE record over
+                            the sim window. This is what the boundary uses.
+  noaa_sandy_validation.nc  validation — ALL gauges, including ones that failed
+                            mid-storm. For comparing modeled zs vs observed at
+                            obs points; NOT safe as boundary forcing.
+
+Why the split: the Sandy Hook gauge (8531680) flooded out and stopped
+reporting at 2012-10-29 23:00 — half its record is NaN. Feeding that into
+the boundary collapses the forcing on the northern stretch mid-storm (the
+boundary cell loses its water level and the domain drains there). The Battery
+(8518750, ~5 km north, stayed online, peak 3.42 m) anchors that latitude
+instead. Sandy Hook is kept for validation only.
+
+Output schema (both files) matches `gtsm_nj_2012_10_ready.nc`:
   dims:   (time, stations)
   coord:  time, stations, lon(stations), lat(stations)
   var:    waterlevel(time, stations)  [m NAVD88]
 
 Catalog usage after running:
     sf.water_level.create(geodataset="noaa_sandy_nj", buffer=50000)
-
-Gauges chosen to bracket the model boundary and capture the alongshore
-gradient that's flattened in GTSM (Sandy Hook ~3.9 m vs Atlantic City ~2.8 m).
 """
+import os
 from pathlib import Path
 import requests
+import numpy as np
 import pandas as pd
 import xarray as xr
 
-OUT = Path("/home/zagreus/nj_sandy_sfincs/data/gtsm/noaa_sandy_nj.nc")
+OUT_DIR = Path("/home/zagreus/nj_sandy_sfincs/data/gtsm")
+OUT_FORCING = OUT_DIR / "noaa_sandy_nj.nc"
+OUT_VALIDATION = OUT_DIR / "noaa_sandy_validation.nc"
 
 # NOAA CO-OPS stations along NJ + NY Bight, north to south.
-# Verified water-level gauges with NAVD88 datum + 6-min/hourly data through Sandy.
+# role="forcing"    -> complete record, safe as a boundary source
+# role="validation" -> incomplete record (gauge failure), validation use only
 STATIONS = [
-    {"id": "8518750", "name": "The Battery, NY",       "lon": -74.0142, "lat": 40.7006},
-    {"id": "8531680", "name": "Sandy Hook, NJ",        "lon": -74.0091, "lat": 40.4669},
-    {"id": "8534720", "name": "Atlantic City, NJ",     "lon": -74.4181, "lat": 39.3550},
-    {"id": "8536110", "name": "Cape May, NJ",          "lon": -74.9600, "lat": 38.9683},
+    {"id": "8518750", "name": "The Battery, NY",   "lon": -74.0142, "lat": 40.7006, "role": "forcing"},
+    {"id": "8531680", "name": "Sandy Hook, NJ",    "lon": -74.0091, "lat": 40.4669, "role": "validation"},  # failed 10-29 23:00
+    {"id": "8534720", "name": "Atlantic City, NJ", "lon": -74.4181, "lat": 39.3550, "role": "forcing"},
+    {"id": "8536110", "name": "Cape May, NJ",      "lon": -74.9600, "lat": 38.9683, "role": "forcing"},
 ]
 
 # Sandy window — pad either side of landfall (2012-10-29 ~23:30 UTC at Atlantic City).
@@ -61,25 +76,20 @@ def fetch(station_id: str) -> pd.Series:
     return df.set_index("t")["v"].rename(station_id)
 
 
-def main():
-    print(f"Fetching {len(STATIONS)} NOAA stations for {BEGIN}-{END} ...")
-    series = {s["id"]: fetch(s["id"]) for s in STATIONS}
-    for sid, s in series.items():
-        print(f"  {sid}: n={s.notna().sum()}  peak={s.max():.2f} m NAVD88")
-
-    df = pd.concat(series.values(), axis=1)
-    df.columns = [s["id"] for s in STATIONS]
-
+def build_dataset(stations: list[dict], series: dict[str, pd.Series], title: str) -> xr.Dataset:
+    """Assemble a (time, stations) GeoDataset from a station subset."""
+    df = pd.concat([series[s["id"]] for s in stations], axis=1)
+    df.columns = [s["id"] for s in stations]
     ds = xr.Dataset(
         {"waterlevel": (("time", "stations"), df.values.astype("float64"))},
         coords={
             "time":     df.index.values,
-            "stations": [int(s["id"]) for s in STATIONS],
-            "lon": ("stations", [s["lon"] for s in STATIONS]),
-            "lat": ("stations", [s["lat"] for s in STATIONS]),
+            "stations": [int(s["id"]) for s in stations],
+            "lon": ("stations", [s["lon"] for s in stations]),
+            "lat": ("stations", [s["lat"] for s in stations]),
         },
         attrs={
-            "title":  "NOAA CO-OPS hourly water levels — Hurricane Sandy",
+            "title":  title,
             "source": "https://api.tidesandcurrents.noaa.gov/api/prod/datagetter",
             "datum":  "NAVD88",
             "units":  "m",
@@ -88,10 +98,59 @@ def main():
     ds["waterlevel"].attrs.update(units="m", datum="NAVD88")
     ds["lon"].attrs.update(units="degrees_east", standard_name="longitude")
     ds["lat"].attrs.update(units="degrees_north", standard_name="latitude")
+    return ds
 
-    OUT.parent.mkdir(parents=True, exist_ok=True)
-    ds.to_netcdf(OUT)
-    print(f"Wrote {OUT}")
+
+def write_atomic(ds: xr.Dataset, path: Path) -> None:
+    """Write to a temp file then os.replace into place.
+
+    netCDF/HDF5 takes an exclusive lock to write, so writing directly fails
+    with PermissionError if another process (e.g. a Jupyter kernel that cached
+    the file via the data catalog) holds it open. Writing to a temp file and
+    atomically renaming sidesteps that — the holder keeps its old inode, new
+    readers get the new file.
+    """
+    tmp = path.with_suffix(path.suffix + ".tmp")
+    ds.to_netcdf(tmp)
+    os.replace(tmp, path)
+
+
+def main():
+    print(f"Fetching {len(STATIONS)} NOAA stations for {BEGIN}-{END} ...")
+    series = {s["id"]: fetch(s["id"]) for s in STATIONS}
+    for s in STATIONS:
+        v = series[s["id"]]
+        n_valid = int(v.notna().sum())
+        complete = n_valid == len(v)
+        flag = "" if complete else f"  <- INCOMPLETE ({len(v) - n_valid} NaN), {s['role']}-only"
+        print(f"  {s['id']} {s['name']:18s}: n={n_valid}/{len(v)}  peak={v.max():.2f} m NAVD88{flag}")
+
+    OUT_DIR.mkdir(parents=True, exist_ok=True)
+
+    # Forcing file: only stations with a complete record. Guard against a
+    # station silently degrading in a future re-download.
+    forcing = [s for s in STATIONS if s["role"] == "forcing"]
+    incomplete = [s for s in forcing if int(series[s["id"]].notna().sum()) != len(series[s["id"]])]
+    if incomplete:
+        raise RuntimeError(
+            f"forcing stations have gaps: {[s['id'] for s in incomplete]} — "
+            "inspect before writing the boundary file"
+        )
+    ds_forcing = build_dataset(
+        forcing, series,
+        "NOAA CO-OPS hourly water levels (forcing subset) — Hurricane Sandy",
+    )
+    write_atomic(ds_forcing, OUT_FORCING)
+    print(f"Wrote {OUT_FORCING}  ({len(forcing)} stations: "
+          f"{', '.join(s['id'] for s in forcing)})")
+
+    # Validation file: all stations, gaps and all.
+    ds_val = build_dataset(
+        STATIONS, series,
+        "NOAA CO-OPS hourly water levels (all gauges, validation) — Hurricane Sandy",
+    )
+    write_atomic(ds_val, OUT_VALIDATION)
+    print(f"Wrote {OUT_VALIDATION}  ({len(STATIONS)} stations, includes incomplete records)")
 
 
 if __name__ == "__main__":
