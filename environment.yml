@@ -1,15 +1,18 @@
-name: nj-sfincs
+name: sfincs
 channels:
   - conda-forge
 dependencies:
   - python=3.14
-  - hydromt_sfincs
+  - hydromt
+  - hydromt_sfincs   # v2.0.0rc2 — component-based API
   - jupyter
   - matplotlib
   - geopandas
   - rasterio
+  - rioxarray
   - xarray
   - netcdf4
   - pyproj
-  - cdsapi        # for GTSM/ERA5 download from Copernicus
-  - hydromt
+  - cdsapi           # ERA5 winds/pressure + wave field (Copernicus CDS)
+  - s3fs             # NOAA AORC rainfall (AWS Open Data, Zarr)
+  - requests         # USGS / NOAA / NDBC REST downloads
