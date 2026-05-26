@@ -425,12 +425,14 @@ print(f"patched {inp_path} — infiltration keys removed")
 sf.quadtree_snapwave_mask.create_active(zmin=-50, zmax=10)
 
 # Wave open boundary on the offshore (deepest) edge of the SnapWave mask:
-# z <= -8 m. Same idea as the SFINCS waterlevel boundary, just at deeper
-# water because SnapWave needs the boundary in water that can actually
-# carry the incident spectrum.
+# z <= -15 m. Deeper than the SFINCS waterlevel boundary because SnapWave
+# needs the boundary in water that can carry the incident spectrum, AND
+# keeping the wavebnd out of the surf-zone refinement (L3/L4 cells) avoids
+# applying radiation-stress forcing in fine cells where the resulting
+# gradients destabilize the SFINCS solver.
 sf.quadtree_snapwave_mask.create_boundary(
     btype="waves",
-    zmax=-8,
+    zmax=-15,
     reset_bounds=True,
 )
 
@@ -456,13 +458,16 @@ print(f"snapwave_mask: active={int((sw==1).sum())} "
         code('''\
 # Manual workaround for the create_boundary(btype="waves") bug.
 # Reads neumann (mask==3) cells, flips the deep-water subset to wavebnd (mask==2).
+# Threshold z <= -15 m matches the (broken) create_boundary call above — keeps
+# wavebnd out of the surf-zone refinement cells where steep radiation-stress
+# gradients crash the SFINCS momentum solver.
 import numpy as np
 
 sw = sf.quadtree_grid.data["snapwave_mask"]
 z  = sf.quadtree_grid.data["z"]
 
 mask_data = sw.values.copy()
-to_waves = (mask_data == 3) & (z.values <= -8)
+to_waves = (mask_data == 3) & (z.values <= -15)
 print(f"converting {int(to_waves.sum())} neumann cells to waves boundary")
 mask_data[to_waves] = 2
 
@@ -472,6 +477,25 @@ sf.quadtree_grid.data["snapwave_mask"] = sw.copy(data=mask_data)
 sw_new = sf.quadtree_grid.data["snapwave_mask"]
 for v, name in [(1, "active"), (2, "wavebnd"), (3, "neumann")]:
     print(f"  mask=={v} ({name}): {int((sw_new==v).sum())}")
+'''),
+    ],
+
+    # ---------- Wavemaker: SnapWave -> SFINCS forced inflow line ----------
+    "bf111cf3": [
+        markdown(
+            "### Wavemaker line (SnapWave → SFINCS handoff)\n"
+            "\n"
+            "Following Leijnse et al. (Carolinas / Florence, 2025), the SnapWave radiation-stress forcing is injected into SFINCS along a **single alongshore wavemaker line** at the ~−5 m NAVD88 contour rather than smeared across the full SnapWave/SFINCS overlap. Without this line, SFINCS receives wave forcing across every cell where the two masks overlap; the steep gradients at the SFINCS-active edge (z≈−10 m) and the L3↔L4 (50↔25 m) refinement interface inside the surf zone are enough to drive SFINCS's momentum solver unstable (uvmax > 1000 m/s within the first 1 000 s of simulated time, deterministically, regardless of SnapWave parameter tuning).\n"
+            "\n"
+            "The wavemaker is built by `scripts/build_wavemaker_line.py` from the CUDEM −5 m contour, trimmed to the open-coast portion (Manasquan-ish up to just south of Sandy Hook tip). **Plan A** (current): open-coast only. **Plan B** (future, if Sandy Hook back-bay validation is poor): also add a bay-side wavemaker inside Sandy Hook Bay to feed wave forcing into the back-bay shoreline.\n"
+        ),
+        code('''\
+# Wavemaker LineString from CUDEM −5 m contour (open-coast, ~34 km).
+# See scripts/build_wavemaker_line.py for the extraction recipe.
+sf.wave_makers.create("wavemaker_nj_coast")
+print(f"wave makers: {sf.wave_makers.nr_lines} line(s)")
+for i, geom in enumerate(sf.wave_makers.gdf.geometry):
+    print(f"  line {i}: length={geom.length/1000:.2f} km  vertices={len(geom.coords)}")
 '''),
     ],
 }
