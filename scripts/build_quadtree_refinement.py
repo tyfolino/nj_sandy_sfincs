@@ -43,7 +43,11 @@ GRID_EPSG = 32618
 
 # Elevation gates (m, NAVD88). zb is positive UP.
 LEVEL2_ZMIN, LEVEL2_ZMAX = -20.0, 30.0   # back-bay floor through highest dunes
-LEVEL3_ZMIN, LEVEL3_ZMAX = -8.0,  8.0    # surf zone through dune crest
+LEVEL3_ZMIN, LEVEL3_ZMAX = -8.0,  3.0    # surf + foredune + immediate back-beach
+                                          # (NJ coastal plain sits at +3-8 m;
+                                          #  +3 zmax keeps it OUT of L3 — was
+                                          #  pulling the whole inland into 25 m
+                                          #  refinement on the first run.)
 
 # Shrink the level-2 polygon eastward by this much, so the deep shelf
 # (the easternmost slice) stays at level 1 = 100 m instead of pulling 50 m cells.
