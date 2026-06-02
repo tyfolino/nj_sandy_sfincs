@@ -15,3 +15,5 @@ __pycache__/
 
 # Logs
 *.log
+notebooks/build_quadtree_from_script_TKI-share_including_Snapwave_v05_withigwaves_withwavemaker.ipynb
+.gitignore
