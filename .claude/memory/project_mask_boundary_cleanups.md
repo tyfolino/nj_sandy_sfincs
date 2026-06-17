@@ -7,13 +7,27 @@ metadata:
   originSessionId: 63424ae5-8815-4197-8275-6cf0f8cea8eb
 ---
 
-# Mask/boundary cleanups — DEFERRED until after current testing (2026-06-02)
+# Mask/boundary cleanups — DEFERRED, to be BATCHED INTO THE X2 REBUILD (2026-06-02; decision + recount 2026-06-12)
 
 Surfaced while reviewing the rebuilt quadtree mask-layout plot. Both are
 PRE-EXISTING (not caused by the X1/CUDEM work), optional, and NOT blockers for
-the in-progress run. User wants to add them AFTER finishing the current X1 +
-re-clipped-CUDEM test. Implement as opt-in toggles and A/B the back-bay
+the in-progress run. Implement as opt-in toggles and A/B the back-bay
 validation before committing.
+
+**DECISION (2026-06-12):** fold the boundary restriction + sliver drop into the
+SAME Phase-1 rebuild as the X2 seaward extension (both are mask/geometry changes →
+one ~13 GB rebuild, not two). **X2 alone does NOT fix the Sandy Hook boundary wrap** —
+X2 redraws the *eastern* (Atlantic) edge; the wrap is the *northern* Sandy Hook Bay
+edge, and those bay cells are already deep (median zb −9.9 m) so it isn't a depth
+problem either. Keep the two "Sandy Hook" problems distinct: (a) this boundary-GEOMETRY
+wrap (NOT fixed by X2) vs (b) the Sandy Hook GAUGE NOISE = the offshore 2Δx ring
+leaking ~2.7 km to the gauge (IS fixed by X2). Documented in the notebook: boundary
+markdown cell (### 5) has a "Known issue" note; the end-of-notebook status section
+open-question #2 covers both boundary fixes. See [[project-wavemaker-run]], [[project-validation-roadmap]].
+
+**Recount on the CURRENT (post-wavemaker) model, 2026-06-12:** 2403 mask==2 cells —
+**962 on the Atlantic seaward edge, 1441 west/back of it, of which ~980 in Sandy Hook
+Bay** (was 1970/918/1052 on 2026-06-02; rebuild shifted the counts, same story).
 
 ## (1) Waterlevel boundary claims the back-bay / estuary edges
 `quadtree_mask.create_boundary(btype="waterlevel", zmax=-1)` (notebook cell ~14)
