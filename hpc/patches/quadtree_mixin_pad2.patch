@@ -1,0 +1,41 @@
+diff --git a/hydromt_sfincs/components/quadtree/quadtree_mixin.py b/hydromt_sfincs/components/quadtree/quadtree_mixin.py
+index ecf68417..4d3d09c9 100644
+--- a/hydromt_sfincs/components/quadtree/quadtree_mixin.py
++++ b/hydromt_sfincs/components/quadtree/quadtree_mixin.py
+@@ -80,17 +80,32 @@ class SfincsQuadtreeMixin:
+                         continue
+ 
+                     # Make a regular grid for this chunk
++                    _mmin = int(m_level[in_chunk].min())
++                    _mmax = int(m_level[in_chunk].max()) + 1
++                    _nmin = int(n_level[in_chunk].min())
++                    _nmax = int(n_level[in_chunk].max()) + 1
++                    # hydromt's raster accessor rejects rasters with <2 cells in
++                    # a spatial dim. A 1-cell-wide quadtree sliver (all chunk
++                    # cells share one m or n index) yields such a block and
++                    # crashes the merge/reproject. Pad to 2 cells: the extra
++                    # row/col gets coords beyond the real cells, so the
++                    # searchsorted sample-back below never selects it (the
++                    # computed values for real cells are unchanged).
++                    if _mmax - _mmin < 2:
++                        _mmax = _mmin + 2
++                    if _nmax - _nmin < 2:
++                        _nmax = _nmin + 2
+                     da_like = make_regular_grid(
+                         x0=self.data.attrs["x0"],
+                         y0=self.data.attrs["y0"],
+                         dx=dxmin,
+                         dy=dymin,
+-                        mmax=m_level[in_chunk].max() + 1,
+-                        nmax=n_level[in_chunk].max() + 1,
++                        mmax=_mmax,
++                        nmax=_nmax,
+                         rotation=self.data.attrs["rotation"],
+                         crs=self.model.crs,
+-                        mmin=m_level[in_chunk].min(),
+-                        nmin=n_level[in_chunk].min(),
++                        mmin=_mmin,
++                        nmin=_nmin,
+                         make_ugrid=False,
+                     )
+ 

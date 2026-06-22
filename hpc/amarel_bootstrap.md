@@ -133,6 +133,10 @@ $MM create -n sfincs -f hpc/environment.yml -y
 # 2. editable hydromt_sfincs at the pinned commit
 git clone https://github.com/Deltares/hydromt_sfincs.git $PROJ/hydromt_sfincs
 cd $PROJ/hydromt_sfincs && git checkout d8514d6
+# 2a. REQUIRED local patch — pad-to-2-cells fix in compute_quadtree (see below).
+#     Without it the quadtree build crashes on a 1-cell-wide sliver. The clone is
+#     gitignored by the main repo, so the fix is shipped as a tracked .patch:
+git apply $PROJ/hpc/patches/quadtree_mixin_pad2.patch
 $MM run -n sfincs pip install -e . --no-deps   # --no-deps: conda already has numba/pyflwdir/etc.
 ```
 
@@ -165,8 +169,10 @@ one m or n index) produced a `(N,1)` block → `ValueError: Invalid raster: less
 2 cells in x_dim x` in `quadtree_elevation.create` (and would hit roughness/subgrid/
 infiltration too). **Fix:** pad each chunk's `mmax`/`nmax` to ≥2 cells; the extra
 row/col gets coords beyond the real cells so the `searchsorted` sample-back never
-selects it (results-invariant). This patch lives in the editable clone only — re-apply
-if hydromt_sfincs is re-cloned.
+selects it (results-invariant). The clone is gitignored by the main repo, so the fix
+is shipped as a tracked patch — **`hpc/patches/quadtree_mixin_pad2.patch`** — applied
+automatically by step 2a above (`git apply`). To re-apply by hand after a re-clone:
+`cd $PROJ/hydromt_sfincs && git apply $PROJ/hpc/patches/quadtree_mixin_pad2.patch`.
 
 ### Phase 3 outcome (verified 2026-06-15)
 Batch path works: `sbatch hpc/sfincs_run.slurm model_manning_test` ran the container solve
