@@ -38,7 +38,8 @@ import pandas as pd
 import requests
 import xarray as xr
 
-OUT = Path("/home/zagreus/nj_sandy_sfincs/data/waves/ndbc_sandy_44025.nc")
+ROOT = Path(os.environ.get("NJ_ROOT", Path(__file__).resolve().parents[1]))
+OUT = ROOT / "data/waves/ndbc_sandy_44025.nc"
 
 STATION = {"id": "44025", "name": "Long Island 30NM S of Islip",
            "lon": -73.164, "lat": 40.251}

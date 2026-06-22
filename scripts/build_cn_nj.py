@@ -30,9 +30,10 @@ from shapely.geometry import box
 
 from hydromt_sfincs import DATADIR
 
-REGION = Path("/home/zagreus/nj_sandy_sfincs/data/region.geojson")
-NLCD = Path("/home/zagreus/nj_sandy_sfincs/data/roughness/nlcd_2012.tif")
-OUT_DIR = Path("/home/zagreus/nj_sandy_sfincs/data/infiltration")
+ROOT = Path(os.environ.get("NJ_ROOT", Path(__file__).resolve().parents[1]))
+REGION = ROOT / "data/region.geojson"
+NLCD = ROOT / "data/roughness/nlcd_2012.tif"
+OUT_DIR = ROOT / "data/infiltration"
 OUT = OUT_DIR / "cn_nj.nc"
 
 SDA = "https://sdmdataaccess.sc.egov.usda.gov/Tabular/post.rest"

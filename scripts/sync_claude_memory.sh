@@ -10,10 +10,11 @@
 #   machine A:  ...work...  ->  backup  ->  git add/commit/push
 #   machine B:  git pull    ->  restore ->  start Claude (memory is loaded from ~/.claude)
 #
-# The live memory path is derived from the repo's absolute path using Claude
-# Code's munging (every "/" and "_" -> "-"). This only matches automatically if
-# the repo sits at the SAME absolute path on each machine (e.g. /home/zagreus/
-# nj_sandy_sfincs). If your path differs, set CLAUDE_MEMORY_DIR to override.
+# The live memory path is derived from THIS machine's repo path using Claude
+# Code's munging (every "/" and "_" -> "-"), so it resolves correctly on each
+# machine regardless of where the repo lives. If Claude stored its memory under
+# a different path (e.g. you launched it from outside the repo), set
+# CLAUDE_MEMORY_DIR to override.
 set -euo pipefail
 
 REPO="$(git rev-parse --show-toplevel)"

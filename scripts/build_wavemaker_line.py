@@ -7,6 +7,7 @@ zonal coupling.
 
 Output: data/wavemakers/wavemaker_line.geojson  (EPSG:32618)
 """
+import os
 from pathlib import Path
 
 import geopandas as gpd
@@ -16,9 +17,10 @@ from rasterio.warp import calculate_default_transform, reproject, Resampling
 from shapely.geometry import LineString, box
 import contourpy
 
-DEM_PATH = Path("/home/zagreus/nj_sandy_sfincs/data/elevation/cudem_asbury.tif")
-REGION_PATH = Path("/home/zagreus/nj_sandy_sfincs/data/region.geojson")
-OUT_DIR = Path("/home/zagreus/nj_sandy_sfincs/data/wavemakers")
+ROOT = Path(os.environ.get("NJ_ROOT", Path(__file__).resolve().parents[1]))
+DEM_PATH = ROOT / "data/elevation/cudem_asbury.tif"
+REGION_PATH = ROOT / "data/region.geojson"
+OUT_DIR = ROOT / "data/wavemakers"
 OUT_PATH = OUT_DIR / "wavemaker_line.geojson"
 
 CONTOUR_Z = -5.0           # m NAVD88; Leijnse-style ~5 m at high tide
@@ -111,18 +113,27 @@ if coords[0, 1] > coords[-1, 1]:
     wavemaker = LineString(coords)
     print("reversed line to south->north (so SnapWave forcing enters from the east)")
 
-# PLAN A: open-coast only — trim the line at the point where it stops climbing
-# monotonically northward. The full −5 m contour wraps around Sandy Hook spit
-# and into Raritan/Sandy Hook Bay, which we don't want feeding wave forcing in
-# this first test. Keep only the south->north monotonic portion (open coast).
+# PLAN A: open-coast only — trim off the Sandy Hook wrap. The full −5 m contour
+# climbs the open coast then curves NW around the Sandy Hook spit (~y=4480–4482k)
+# into Sandy Hook Bay, which we don't want feeding wave forcing in this first test.
+#
+# REPRODUCIBILITY: the old trim used argmax(y) = "keep up to the northernmost
+# point." But the contour's SEGMENT CONNECTIVITY around the Hook is version-
+# sensitive (contourpy/reproject differ across stacks): on one machine the open
+# coast and the Hook wrap are one connected segment, on another they split. With
+# argmax that produced different northern endpoints (desktop 33.7 km, stopping at
+# the open-coast end y≈4478k; Amarel 37.8 km, wrapping to the Hook tip y≈4482k) —
+# and the extra NW wrap put wavemaker points on the L3 refinement boundary and
+# destabilised SFINCS (uvmax>1000). A FIXED NORTHING CAP makes the trim identical
+# regardless of how contourpy stitches the segments.
+Y_OPEN_COAST_MAX = 4_478_500.0   # m UTM18N; just N of the open coast, S of the Hook-tip wrap
 coords = np.array(wavemaker.coords)
 n_before = len(coords)
-# Simple trim: keep up to the first point that reaches the contour's max y
-# (the northernmost open-coast point, before the line wraps back around Sandy Hook).
-ymax_idx = int(np.argmax(coords[:, 1]))
-coords = coords[: ymax_idx + 1]
+north_of_cap = np.where(coords[:, 1] > Y_OPEN_COAST_MAX)[0]   # walking S->N, first crossing
+cut = int(north_of_cap[0]) if north_of_cap.size else len(coords)
+coords = coords[:cut]
 print(f"open-coast trim: kept {len(coords)}/{n_before} vertices "
-      f"(stops at y={coords[-1, 1]:.0f})")
+      f"(cap y<={Y_OPEN_COAST_MAX:.0f}, stops at y={coords[-1, 1]:.0f})")
 wavemaker = LineString(coords)
 
 # Simplify to drop micro-wiggles below the 200 m grid resolution

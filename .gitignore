@@ -15,5 +15,23 @@ __pycache__/
 
 # Logs
 *.log
+logs/
 notebooks/build_quadtree_from_script_TKI-share_including_Snapwave_v05_withigwaves_withwavemaker.ipynb
 .gitignore
+
+# HPC / Amarel — reproducible env + containers + scratch outputs (never commit)
+# (git does NOT support inline comments — keep patterns on their own lines)
+# micromamba env (rebuild from hpc/environment.yml)
+micromamba/
+# editable clone (re-clone @ pinned commit d8514d6)
+hydromt_sfincs/
+# Singularity images (re-pull from deltares/sfincs-cpu) + container tarballs
+*.sif
+*.tar
+# known-good model backup (large outputs)
+model_quadtree.good/
+# nbconvert --execute artifacts
+notebooks/*.executed.ipynb
+# smoke-test solve outputs (regenerated each run; model definition stays tracked)
+model_manning_test/sfincs_his.nc
+model_manning_test/sfincs_map.nc

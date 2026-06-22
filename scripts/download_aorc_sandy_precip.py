@@ -26,8 +26,9 @@ import geopandas as gpd
 import s3fs
 import xarray as xr
 
-REGION = Path("/home/zagreus/nj_sandy_sfincs/data/region.geojson")
-OUT_DIR = Path("/home/zagreus/nj_sandy_sfincs/data/precip")
+ROOT = Path(os.environ.get("NJ_ROOT", Path(__file__).resolve().parents[1]))
+REGION = ROOT / "data/region.geojson"
+OUT_DIR = ROOT / "data/precip"
 OUT = OUT_DIR / "aorc_sandy_nj.nc"
 
 AORC_STORE = "noaa-nws-aorc-v1-1-1km/2012.zarr"

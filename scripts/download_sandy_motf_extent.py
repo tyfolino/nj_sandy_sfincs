@@ -29,6 +29,7 @@ initialised by the time Python runs the assignment.)
 Output: data/validation/sandy_motf_extent.tif  (uint8, 1=flooded, 0=dry; EPSG:32618).
 """
 import io
+import os
 from pathlib import Path
 
 # Import order matters with this env's GDAL: requests/geopandas/PIL must come
@@ -40,8 +41,9 @@ from PIL import Image
 import rasterio
 from rasterio.transform import from_origin
 
-REGION = Path("/home/zagreus/nj_sandy_sfincs/data/region.geojson")
-OUT = Path("/home/zagreus/nj_sandy_sfincs/data/validation/sandy_motf_extent.tif")
+ROOT = Path(os.environ.get("NJ_ROOT", Path(__file__).resolve().parents[1]))
+REGION = ROOT / "data/region.geojson"
+OUT = ROOT / "data/validation/sandy_motf_extent.tif"
 EXPORT = ("https://njmaps1.rad.rutgers.edu/arcgis/rest/services/"
           "CoastalFlooding/StormSurge/MapServer/export")
 EPSG = 32618

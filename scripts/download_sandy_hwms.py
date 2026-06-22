@@ -21,9 +21,10 @@ import geopandas as gpd
 import requests
 from shapely.geometry import Point
 
-OUT_DIR = Path("/home/zagreus/nj_sandy_sfincs/data/validation")
+ROOT = Path(os.environ.get("NJ_ROOT", Path(__file__).resolve().parents[1]))
+OUT_DIR = ROOT / "data/validation"
 OUT = OUT_DIR / "sandy_hwms.geojson"
-REGION = Path("/home/zagreus/nj_sandy_sfincs/data/region.geojson")
+REGION = ROOT / "data/region.geojson"
 
 EVENT_ID = 24  # 2012 Sandy
 API = f"https://stn.wim.usgs.gov/STNServices/Events/{EVENT_ID}/HWMs.json"

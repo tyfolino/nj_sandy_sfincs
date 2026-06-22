@@ -22,6 +22,7 @@ geometry_mask crash documented in scripts/download_sandy_motf_extent.py).
 Output: data/elevation/inlet_channels_burn.tif (EPSG:32618; -2 m at channel
 pixels, NoData elsewhere — set as a fill layer in the elevation merge).
 """
+import os
 from pathlib import Path
 
 import numpy as np
@@ -31,8 +32,9 @@ from PIL import Image, ImageDraw
 import rasterio
 from rasterio.transform import from_origin
 
-OUT = Path("/home/zagreus/nj_sandy_sfincs/data/elevation/inlet_channels_burn.tif")
-REGION = Path("/home/zagreus/nj_sandy_sfincs/data/region.geojson")
+ROOT = Path(os.environ.get("NJ_ROOT", Path(__file__).resolve().parents[1]))
+OUT = ROOT / "data/elevation/inlet_channels_burn.tif"
+REGION = ROOT / "data/region.geojson"
 
 EPSG = 32618
 RES = 5.0                  # m; fine enough that the channel survives subgrid averaging

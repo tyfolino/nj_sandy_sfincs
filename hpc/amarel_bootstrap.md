@@ -118,6 +118,64 @@ Once `claude` launches and authenticates on Amarel, **Phase 2 starts there.**
 
 ---
 
+## Phase 1 — what actually worked on Amarel (2026-06-15)
+
+Env manager is **micromamba** (no conda module on Amarel), installed into
+`$PROJ/micromamba`. `$PROJ = /home/tpj8/nj_sandy_sfincs` (HOME is on the large
+`/cache` filesystem, 87 T free — no need for `/scratch`).
+
+```bash
+export PROJ=$HOME/nj_sandy_sfincs                       # add to ~/.bashrc
+export MAMBA_ROOT_PREFIX=$PROJ/micromamba
+MM=$PROJ/micromamba/bin/micromamba
+# 1. env from the pinned spec (bleeding-edge py3.14 stack solved fine, no relaxing needed)
+$MM create -n sfincs -f hpc/environment.yml -y
+# 2. editable hydromt_sfincs at the pinned commit
+git clone https://github.com/Deltares/hydromt_sfincs.git $PROJ/hydromt_sfincs
+cd $PROJ/hydromt_sfincs && git checkout d8514d6
+$MM run -n sfincs pip install -e . --no-deps   # --no-deps: conda already has numba/pyflwdir/etc.
+```
+
+Gotcha chain we hit (now baked into `environment.yml`, kept here for the record):
+the editable `pip install -e .` with `--no-deps` left runtime imports failing one by
+one — `cht_tide` → needs `boto3`, `toml`, `cht_utils` → `cht_utils` needs `paramiko`;
+also `mapbox_earcut` (conda-forge). `environment.yml` now lists `mapbox_earcut`+`cdsapi`
+(conda) and `cht_tide` (pip, which pulls the rest), so a fresh `create` is clean.
+
+Verification gate (all pass): `import hydromt_sfincs` → **2.0.0-rc2** (editable, location
+= the clone), `xugrid`/`rasterio`/`cdsapi` import clean, numpy **2.4.5** / xarray
+**2026.4.0** intact, `pip check` → "No broken requirements found".
+
+Phase 2 done: `singularity pull` → `$PROJ/sfincs-cpu.sif` (206 M, log in `hpc/sfincs_pull.log`).
+
+### Phase 0 outcome (verified 2026-06-15)
+- **Storage:** HOME quota ~100 GB; budget ~35 GB → keep everything in the repo (`$PROJ`),
+  no `/scratch` needed.
+- **Partition = `main-redhat`.** Critical: the default `main` partition is still **CentOS 7
+  (glibc 2.17)** — the pre-upgrade OS. Our env (numpy 2.4.5 etc.) is built against RHEL 9.6
+  glibc 2.34 and will NOT run there. `main-redhat` = the RHEL 9.6 "amarel-new" nodes
+  (glibc 2.34, `/usr/bin/singularity` present). All sbatch/salloc use `-p main-redhat`.
+
+### Local patch to the editable hydromt_sfincs (2026-06-15)
+The conda-forge hydromt build enforces "≥2 cells per spatial dim" in its raster
+accessor; the desktop build didn't. The quadtree builder's `compute_quadtree`
+(`components/quadtree/quadtree_mixin.py`) makes a per-chunk destination grid sized
+`mmax-mmin` × `nmax-nmin`, and a **1-cell-wide quadtree sliver** (all chunk cells at
+one m or n index) produced a `(N,1)` block → `ValueError: Invalid raster: less than
+2 cells in x_dim x` in `quadtree_elevation.create` (and would hit roughness/subgrid/
+infiltration too). **Fix:** pad each chunk's `mmax`/`nmax` to ≥2 cells; the extra
+row/col gets coords beyond the real cells so the `searchsorted` sample-back never
+selects it (results-invariant). This patch lives in the editable clone only — re-apply
+if hydromt_sfincs is re-cloned.
+
+### Phase 3 outcome (verified 2026-06-15)
+Batch path works: `sbatch hpc/sfincs_run.slurm model_manning_test` ran the container solve
+on compute node `hal0324`, 24 threads, state `COMPLETED` (~1:44), `sfincs_map.nc` rewritten,
+log ends "Closing off SFINCS". See `hpc/sfincs_run.slurm` (already targets `main-redhat`).
+Singularity runs as the user, so the old Docker root-owned-output `rm` step is dropped.
+
+---
+
 ## Reference: env to reproduce (captured 2026-06-12, local WSL2)
 - python 3.14.4 · hydromt 1.3.1 · hydromt_sfincs **2.0.0rc2 (editable, Deltares/hydromt_sfincs @ d8514d6, branch main)**
 - xugrid 0.15.2 · xarray 2026.4.0 · numpy 2.4.5 · geopandas 1.1.3 · rasterio 1.5.0 · rioxarray 0.22.0

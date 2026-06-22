@@ -44,7 +44,8 @@ import pandas as pd
 import requests
 import xarray as xr
 
-OUT_DIR = Path("/home/zagreus/nj_sandy_sfincs/data/discharge")
+ROOT = Path(os.environ.get("NJ_ROOT", Path(__file__).resolve().parents[1]))
+OUT_DIR = ROOT / "data/discharge"
 OUT = OUT_DIR / "usgs_sandy_discharge.nc"
 
 CFS_TO_CMS = 0.0283168466

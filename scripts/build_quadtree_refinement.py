@@ -30,12 +30,13 @@ Cell count target ~130k (vs 265k regular grid). Tune by editing LEVEL2_*/LEVEL3_
 
 Output: data/quadtree/refinement_polygons.geojson (EPSG:32618)
 """
+import os
 from pathlib import Path
 
 import geopandas as gpd
 from shapely.geometry import box
 
-ROOT = Path("/home/zagreus/nj_sandy_sfincs")
+ROOT = Path(os.environ.get("NJ_ROOT", Path(__file__).resolve().parents[1]))
 REGION = ROOT / "data" / "region.geojson"
 OUT = ROOT / "data" / "quadtree" / "refinement_polygons.geojson"
 

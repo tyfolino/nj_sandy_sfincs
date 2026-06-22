@@ -26,14 +26,18 @@ Cell-by-cell change log (IDs are stable Jupyter cell IDs from the source nb):
   4d2cda55  DELETE    Stockdon markdown header (SnapWave replaces it)
   bf111cf3  REPLACE   Stockdon code  -> snapwave_boundary_conditions.create_from_grid
   f023a46f  REPLACE   Phase 3 read:  model_root -> "../model_quadtree"
+  cd5b78c0  REPLACE   flood map      -> de-rotated lev3 dep (quadtree has no merged
+                                        dep_subgrid.tif; reproduces MOTF CSI~0.53)
 
   All other Phase 2/3 cells are untouched.
 """
 import json
+import os
 from pathlib import Path
 
-SRC = Path("/home/zagreus/nj_sandy_sfincs/notebooks/sfincs-asbury-sandy.ipynb")
-DST = Path("/home/zagreus/nj_sandy_sfincs/notebooks/sfincs-asbury-sandy-quadtree.ipynb")
+ROOT = Path(os.environ.get("NJ_ROOT", Path(__file__).resolve().parents[1]))
+SRC = ROOT / "notebooks/sfincs-asbury-sandy.ipynb"
+DST = ROOT / "notebooks/sfincs-asbury-sandy-quadtree.ipynb"
 
 
 def code(src: str):
@@ -75,7 +79,7 @@ Path(model_root).mkdir(parents=True, exist_ok=True)
 logger = log._add_filehandler(log_file)
 
 # Add data catalogs
-data_libs = ["/home/zagreus/nj_sandy_sfincs/data/data_catalog.yml"]
+data_libs = ["../data/data_catalog.yml"]
 
 # Create model. write_gis=True dumps gis/*.tif/geojson for QGIS inspection
 # (same as the regular-grid notebook).
@@ -91,7 +95,7 @@ sf = SfincsModel(
 # the polygon recipe (full region @ L1, coastal corridor @ L2, dune+surf @ L3
 # gated by elevation). Cells outside any polygon stay at 200 m.
 refinement_gdf = gpd.read_file(
-    "/home/zagreus/nj_sandy_sfincs/data/quadtree/refinement_polygons.geojson"
+    "../data/quadtree/refinement_polygons.geojson"
 )
 
 # elevation_list is passed here so the level-2/3 polygons can use their
@@ -105,7 +109,7 @@ elevation_list = [
 ]
 
 sf.quadtree_grid.create_from_region(
-    region={"geom": "/home/zagreus/nj_sandy_sfincs/data/region.geojson"},
+    region={"geom": "../data/region.geojson"},
     res=200,                # base level-0 cell size
     rotated=True,
     crs="utm",
@@ -209,7 +213,7 @@ gc.collect()
 # nrmax=200 chunks the subgrid build by cell-block; this is the load-bearing
 # memory mitigation for the 24 GB RAM budget (build does NOT load the full
 # subgrid raster at once).
-reclass_table = "/home/zagreus/nj_sandy_sfincs/data/roughness/NLCD_CONUS_mapping.csv"
+reclass_table = "../data/roughness/NLCD_CONUS_mapping.csv"
 
 elevation_list = [
     {"elevation": "usace_nj_2010"},
@@ -255,7 +259,7 @@ for v in ["z_zmin", "z_zmax", "uv_havg", "uv_navg"]:
     "be93bc92": '''\
 # --- Phase 2 entry point: reopen the static quadtree model from disk ---
 model_root = "../model_quadtree"
-data_libs = ["/home/zagreus/nj_sandy_sfincs/data/data_catalog.yml"]
+data_libs = ["../data/data_catalog.yml"]
 
 sf = SfincsModel(model_root, data_libs=data_libs, mode="r+")
 print(f"reopened {sf.grid_type} model at {model_root}")
@@ -374,7 +378,7 @@ print(f"SCS max soil-moisture retention S [inch]: "
     "f023a46f": '''\
 # Open the model read-only for result inspection. Standalone entry point.
 model_root = "../model_quadtree"
-data_libs = ["/home/zagreus/nj_sandy_sfincs/data/data_catalog.yml"]
+data_libs = ["../data/data_catalog.yml"]
 model_abs = Path(model_root).resolve()
 
 mod = SfincsModel(model_root, data_libs=data_libs, mode="r")
@@ -383,6 +387,36 @@ mod.output.read()
 print(f"grid_type: {mod.grid_type}")
 print("Output variables available:")
 list(mod.output.data.keys())
+''',
+
+    "cd5b78c0": '''\
+# QUADTREE flood map.  Unlike the regular grid, the quadtree subgrid build does
+# NOT write a single merged subgrid/dep_subgrid.tif — it writes per-level
+# dep_subgrid_lev{0..3}.tif, all on the ROTATED UTM mesh.  The finest level
+# (lev3, 3.125 m) blankets the refined surf-zone + back-bay where every MOTF /
+# HWM check happens, so we score on it.  We de-rotate to a NORTH-UP 6.25 m grid
+# ONCE here, so all downstream cells' axis-aligned pixel sampling [(X-c)/a] is
+# EXACT — on the rotated grid it was only approximate (a ~0.7 deg tilt = up to a
+# ~400 m offset across the 35 km domain).  This is the path that reproduces the
+# wavemaker-baseline MOTF CSI ~= 0.53.
+import rioxarray
+
+da_zsmax = mod.output.data["zsmax"].max(dim="timemax")
+
+dep_lev3 = rioxarray.open_rasterio(
+    model_abs / "subgrid" / "dep_subgrid_lev3.tif"
+).squeeze()
+da_dep = dep_lev3.rio.reproject(dep_lev3.rio.crs, resolution=6.25)  # rotated -> north-up
+da_dep = da_dep.where(da_dep != da_dep.rio.nodata)
+print(f"Subgrid DEM (lev3, de-rotated): shape {da_dep.shape}, "
+      f"resolution {da_dep.rio.resolution()}")
+
+# Downscale the quadtree water level onto the north-up DEM (nearest cell), then
+# drop deep-ocean cells (dep > -0.5) so the open shelf doesn't dominate the
+# colour scale.  NB: pass `dep` as an in-memory DataArray — the on-disk
+# path-based downscale_floodmap crashes natively on this numpy/rasterio stack.
+da_hmax = utils.downscale_floodmap(zsmax=da_zsmax, dep=da_dep, hmin=0.05)
+da_hmax = da_hmax.where(da_dep > -0.5)
 ''',
 }
 

@@ -31,7 +31,8 @@ import numpy as np
 import pandas as pd
 import xarray as xr
 
-OUT_DIR = Path("/home/zagreus/nj_sandy_sfincs/data/gtsm")
+ROOT = Path(os.environ.get("NJ_ROOT", Path(__file__).resolve().parents[1]))
+OUT_DIR = ROOT / "data/gtsm"
 OUT_FORCING = OUT_DIR / "noaa_sandy_nj.nc"
 OUT_VALIDATION = OUT_DIR / "noaa_sandy_validation.nc"
 

@@ -28,4 +28,22 @@ dependencies:
   - pyproj
   - shapely
   - pandas
+  # mapbox_earcut: transitive dep of hydromt_sfincs (prebuilt C++ on conda-forge)
+  - mapbox_earcut
+  # cdsapi: needed by the ERA5 download scripts (Phase 6)
+  - cdsapi
+  # s3fs: needed by download_aorc_sandy_precip.py (AORC precip from AWS Open Data)
+  - s3fs
+  # notebook execution (headless run via `jupyter nbconvert --execute`)
+  - nbconvert
+  - nbclient
+  - ipykernel
+  - jupyter_client
+  # cartopy: plot_basemap() in the validation cells imports it
+  - cartopy
   - pip
+  # cht_tide is the only hard dep of hydromt_sfincs that is pip-only (Deltares libs).
+  # It pulls cht_utils -> boto3/toml/paramiko. None pin numpy, so they coexist with the
+  # bleeding-edge conda numpy 2.4.5. Verified on Amarel 2026-06-15.
+  - pip:
+      - cht_tide
