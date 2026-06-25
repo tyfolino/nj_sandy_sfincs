@@ -11,7 +11,7 @@ metadata:
 
 Enabled the SnapWave IG wavemaker (the top defensible fix for the back-bay under-flooding from [[project-validation-roadmap]]). On the CURRENT domain — wavemaker is interior (~10.6 km inside the seaward edge), does NOT need the X2 domain extension (that's a separate fix for the offshore *spectrum* boundary).
 
-## Wiring (in `notebooks/sfincs-asbury-sandy-quadtree.ipynb`)
+## Wiring (in `notebooks/sfincs-nj-sandy.ipynb`)
 - **Cell 28/29**: replaced the disabled-print placeholder with `sf.wave_makers.create("../data/wavemakers/wavemaker_line.geojson", merge=False)` → writes `sfincs.wvm`. Line = −5 m NAVD88 contour from `scripts/build_wavemaker_line.py`, S→N, 8 verts, ~33.7 km, x583–587k / y4445–4478k.
 - **Cell 39 (finalize)**: added `"wvmfile": "sfincs.wvm"` to the defensive key block (rc2 drops config keys on write, same class as the snapwave/latitude keys).
 - Coexists with the X1 `snapwave.bnd` boundary (boundary feeds the spectrum into SnapWave; wavemaker injects the resulting IG+incident forcing into the SFINCS flow), exactly as in Tim Leijnse's `withwavemaker` reference notebook.

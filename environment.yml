@@ -16,3 +16,7 @@ dependencies:
   - cdsapi           # ERA5 winds/pressure + wave field (Copernicus CDS)
   - s3fs             # NOAA AORC rainfall (AWS Open Data, Zarr)
   - requests         # USGS / NOAA / NDBC REST downloads
+  - pip
+  - pip:
+      - nbstripout     # git clean filter — strips notebook outputs/metadata on commit
+                       # (run once per clone: python scripts/setup_nbstripout.py)

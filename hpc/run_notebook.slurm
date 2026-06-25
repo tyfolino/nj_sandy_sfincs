@@ -21,7 +21,7 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 # Some build cells write/read GeoTIFFs; point GDAL/PROJ at the env data dirs.
 export PROJ_LIB="$ENV/share/proj" PROJ_DATA="$ENV/share/proj" GDAL_DATA="$ENV/share/gdal"
 
-NB="${1:-notebooks/sfincs-asbury-sandy-quadtree.ipynb}"
+NB="${1:-notebooks/sfincs-nj-sandy.ipynb}"
 NBNAME="$(basename "$NB")"
 NBDIR="$(dirname "$NB")"
 OUT="${NBNAME%.ipynb}.executed.ipynb"

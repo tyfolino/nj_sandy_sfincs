@@ -104,8 +104,8 @@ Reproducible by `/tmp/x1_relocate_inputs.py` (placed 7 input points along the of
 
 ## Cleanup / unwinding for X2 build
 
-When we move to X2, revert these X1-and-earlier hacks:
-- Restore the original z<=-8 wavebnd workaround removal in `scripts/build_quadtree_notebook.py` (the "manual flip" cells are now known to attack the wrong problem)
+When we move to X2, revert these X1-and-earlier hacks. **NOTE (2026-06-25):** edits now go DIRECTLY in the hand-maintained notebook `notebooks/sfincs-nj-sandy.ipynb` — `scripts/build_quadtree_notebook.py` is HISTORICAL (do not re-run it; see [[project-housekeeping-2026-06-25]]). Verify each hack's current state in the notebook before reverting (X1 was already ported in, so some may be gone).
+- Restore the original z<=-8 wavebnd workaround removal (the "manual flip" cells are now known to attack the wrong problem)
 - Remove the `snapwave_waveforces_factor = 0.0` line if still lingering (harmless but stale)
 - The `data/wavemakers/wavemaker_line.geojson` is reusable for X2 to force IG dynamically
 - Keep `dtwave = 1800` in sfincs.inp

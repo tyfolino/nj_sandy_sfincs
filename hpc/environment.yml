@@ -47,3 +47,6 @@ dependencies:
   # bleeding-edge conda numpy 2.4.5. Verified on Amarel 2026-06-15.
   - pip:
       - cht_tide
+      # nbstripout: git clean filter that strips notebook outputs/metadata on commit.
+      # Run once per clone: python scripts/setup_nbstripout.py
+      - nbstripout

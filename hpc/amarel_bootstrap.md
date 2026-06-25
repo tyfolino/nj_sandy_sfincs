@@ -75,7 +75,7 @@ npm install -g @anthropic-ai/claude-code
 ```
 
 ### 4. Restore the project memory (so cluster-side Claude has full context)
-The 17 memory files in `hpc/claude_memory/` are a snapshot of this project's Claude
+The memory files in `hpc/claude_memory/` are a snapshot of this project's Claude
 memory (goals, the whole SnapWave/wavemaker/validation history, the roadmap). Claude
 keys memory by the working-dir path, so after the first `claude` launch in the repo:
 ```bash
@@ -139,6 +139,17 @@ cd $PROJ/hydromt_sfincs && git checkout d8514d6
 git apply $PROJ/hpc/patches/quadtree_mixin_pad2.patch
 $MM run -n sfincs pip install -e . --no-deps   # --no-deps: conda already has numba/pyflwdir/etc.
 ```
+
+### nbstripout git filter (run once per clone)
+The repo strips notebook outputs/metadata on commit via an nbstripout clean filter.
+`.gitattributes` travels with the repo, but the filter *config* lives in `.git/config`
+(not committed), so activate it once per clone using the env's python (so the filter
+points at the right interpreter on Amarel):
+```bash
+cd $PROJ && $MM run -n sfincs python scripts/setup_nbstripout.py
+```
+Without this, commits still work but notebooks land un-stripped. The filter keeps cell
+ids (`--keep-id`) and drops outputs + `kernelspec`/`language_info`.
 
 Gotcha chain we hit (now baked into `environment.yml`, kept here for the record):
 the editable `pip install -e .` with `--no-deps` left runtime imports failing one by

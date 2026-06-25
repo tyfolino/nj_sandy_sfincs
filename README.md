@@ -7,25 +7,24 @@ Unlike a surge-only model, it represents **compound** coastal flooding — storm
 surge, wave setup, rainfall, and river discharge together — and is validated
 against the Sandy Hook tide gauge and USGS high water marks.
 
-> 📊 Interactive maps don't render on github.com (it strips JavaScript). For the
-> interactive flood map see `notebooks/floodmap.html` via
-> [raw.githack.com](https://raw.githack.com/tyfolino/nj_sandy_sfincs/master/notebooks/floodmap.html),
-> or open the notebook on [nbviewer](https://nbviewer.org/github/tyfolino/nj_sandy_sfincs/blob/master/notebooks/sfincs-asbury-sandy.ipynb).
+> 📊 Interactive maps don't render on github.com (it strips JavaScript). Open the
+> notebook on [nbviewer](https://nbviewer.org/github/tyfolino/nj_sandy_sfincs/blob/master/notebooks/sfincs-nj-sandy.ipynb)
+> to view the rendered flood maps.
 
 ## Study area
 
 NJ coast, Sandy Hook → Asbury Park (~40.15–40.50 °N). The northern half (Sandy
 Hook spit + bay) is included so the offshore boundary carries Sandy's alongshore
 gradient and the NOAA Sandy Hook gauge falls inside the domain for validation.
-Grid: 50 m, rotated, UTM 18N, with 8 subgrid pixels (~3 m effective) to resolve
-the barrier dune line.
+Grid: quadtree (200 → 100 → 50 → 25 m), rotated, UTM 18N, refined toward the dune
+line, with 8 subgrid pixels (~3 m effective) to resolve the barrier.
 
 ## What it models
 
 | Process | How | Source |
 |---------|-----|--------|
 | Storm surge (boundary) | Water-level boundary forced by observed gauges (`buffer=100 km`, interpolated alongshore) | NOAA CO-OPS (Battery, Atlantic City, Cape May) |
-| Wave setup | Stockdon (2006) parametric setup added to the boundary (β_f = 0.05) | NDBC buoy 44025 *(→ ERA5 wave field, in progress)* |
+| Waves | SnapWave incident + infragravity solver, plus a nearshore wavemaker line that injects IG runup/overtopping into the flow | ERA5 wave field |
 | Wind + pressure | ERA5 hourly 10 m winds + MSLP | Copernicus CDS |
 | Rainfall | Distributed precipitation (SCS partitions it) | NOAA AORC v1.1 |
 | River discharge | Point sources at estuary inflows | USGS NWIS (Shark R., Navesink) |
@@ -40,11 +39,12 @@ by CUDEM, NJ LiDAR, and GEBCO offshore.
 
 ```
 notebooks/
-  sfincs-asbury-sandy.ipynb   # the model — Phase 1 build · Phase 2 forcing+run · Phase 3 viz+validation
-  floodmap.html               # standalone interactive max-flood-depth map
+  sfincs-nj-sandy.ipynb       # the model — Phase 1 build · Phase 2 forcing+run · Phase 3 viz+validation
+  archive/                    # superseded notebooks (regular-grid baseline + experiments)
+  reference/                  # Tim Leijnse's quadtree+SnapWave reference notebook
 scripts/                      # data download / preparation (see below)
 data/                         # inputs (gitignored) + data_catalog.yml
-model/                        # SFINCS model files + outputs
+model_quadtree/               # SFINCS model files + outputs (gitignored)
 environment.yml               # conda environment
 ```
 
@@ -59,8 +59,8 @@ GeoJSON and a matching `data/data_catalog.yml` entry):
 | `download_cudem.py`, `download_3dep.py` | CUDEM + LiDAR elevation fill |
 | `download_noaa_sandy_wl.py` | NOAA CO-OPS water levels (boundary + validation) |
 | `download_era5_cds.py` | ERA5 winds + MSLP |
-| `download_ndbc_sandy_waves.py` | NDBC buoy 44025 waves (Stockdon setup) |
-| `download_era5_waves_cds.py` | ERA5 wave field (for spatially-varying setup — staged) |
+| `download_era5_waves_cds.py` | ERA5 wave field (SnapWave incident-wave boundary) |
+| `download_ndbc_sandy_waves.py` | NDBC buoy 44025 waves (validation reference) |
 | `download_aorc_sandy_precip.py` | NOAA AORC rainfall |
 | `download_usgs_sandy_discharge.py` | USGS river discharge |
 | `build_cn_nj.py` | Curve Number grid (NLCD × SSURGO) for infiltration |
@@ -76,41 +76,42 @@ conda activate sfincs
 - **ERA5 / CDS:** configure `~/.cdsapirc` with a Copernicus token and accept the
   ERA5 single-levels terms (needed by the ERA5 download scripts).
 - **SFINCS engine:** runs in Docker — `docker pull deltares/sfincs-cpu:latest`.
+- **Notebook git filter (once per clone):** `python scripts/setup_nbstripout.py` activates
+  the nbstripout clean filter so notebook outputs/metadata are stripped on commit.
 
 ## Running the model
 
 The notebook is organized in three phases:
 
-1. **Phase 1 — Static build** (slow, one-time): grid, elevation, mask + boundary
-   cells, observation points, subgrid tables → written to `model/`.
-2. **Phase 2 — Forcing & run** (fast, iterate here): water level, wave setup,
-   wind/pressure, rainfall, discharge, infiltration → run SFINCS via Docker.
+1. **Phase 1 — Static build** (slow, one-time): quadtree grid, elevation, mask +
+   boundary cells, observation points, subgrid tables → written to `model_quadtree/`.
+2. **Phase 2 — Forcing & run** (fast, iterate here): water level, SnapWave waves +
+   wavemaker, wind/pressure, rainfall, discharge, infiltration → run SFINCS.
 3. **Phase 3 — Visualization & validation**: flood maps, zone stats, and
    validation against the Sandy Hook gauge + USGS high water marks.
 
-SFINCS itself runs via:
+The notebook's `run_sfincs()` helper auto-detects the runtime (Docker locally,
+Singularity on HPC). To run the engine directly via Docker:
 
 ```bash
-docker run --rm -v $(pwd)/model:/data deltares/sfincs-cpu:latest
+docker run --rm -v $(pwd)/model_quadtree:/data deltares/sfincs-cpu:latest
 ```
 
 ## Validation
 
 - **Sandy Hook gauge (8531680)** — temporal check (the gauge failed mid-storm at
   10-29 23:00, before Sandy's true peak, so it bounds rather than fixes the peak).
-- **31 USGS high water marks** — spatial check. Modeled peak water levels are
-  essentially unbiased against the marks (mean bias ≈ 0, RMSE ≈ 1 m): the model
-  neither systematically over- nor under-floods Sandy. The structured exception
-  is the **highest open-coast marks (≥ 4 m)**, under-predicted because parametric
-  setup captures setup but not wave **runup** (a SnapWave/IG signal).
+- **31 USGS high water marks** — spatial check on whether the model floods the
+  same places to the same depth as Sandy did.
+- **FEMA MOTF surge extent** — spatial flood-extent consistency (CSI / POD / FAR).
 
 ## Roadmap / known limitations
 
-- **ERA5 wave field** (in progress) — replace the single-buoy uniform Stockdon
-  setup with a spatially-varying field, fixing the alongshore setup imbalance.
-- **Quadtree + SnapWave + IG wavemakers** (planned) — true wave setup *and*
-  runup; needs a quadtree grid (regular grids aren't supported by SnapWave in
-  hydromt_sfincs v2.0.0rc2; the SFINCS v2.3.2 engine already supports it).
-- **Manning roughness** still uses the SF-Bay-Delta-tuned NLCD reclass table —
-  swap for a NJ/CONUS table.
-- Stockdon setup is applied uniformly alongshore and adds setup, not runup.
+- **Back-bay conveyance** — getting enough water deep into the Shrewsbury/Navesink
+  estuary (Oceanport, Rumson). The eHydro channel carve and the wavemaker helped;
+  the narrows are still the limiting cross-section.
+- **Sandy Hook Bay boundary** — the depth-only water-level/outflow rule mis-tags
+  deep estuary cuts; a two-box geographic correction is implemented in the build
+  but not yet re-validated.
+- **X2 seaward extension** — push the domain offshore so waves develop across the
+  shelf before reaching the model edge (removes nearshore numerical artifacts).

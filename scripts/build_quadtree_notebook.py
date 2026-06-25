@@ -1,6 +1,14 @@
 """
-Build notebooks/sfincs-asbury-sandy-quadtree.ipynb by surgically rewriting the
-working regular-grid notebook (sfincs-asbury-sandy.ipynb). Phase 1 geometry
+HISTORICAL GENERATOR — provenance only; do NOT re-run to "update" the notebook.
+This script originally built the quadtree notebook by rewriting the regular-grid
+notebook. Both source notebooks have since moved (the regular-grid baseline is now
+under notebooks/archive/, the output is the hand-maintained canonical notebook
+notebooks/sfincs-nj-sandy.ipynb). The canonical notebook is now edited directly;
+re-running this would overwrite those hand edits. Kept as a record of how the
+quadtree build was first derived.
+
+Build notebooks/sfincs-nj-sandy.ipynb by surgically rewriting the
+working regular-grid notebook (archive/sfincs-asbury-sandy.ipynb). Phase 1 geometry
 cells are swapped to the quadtree API; SnapWave mask + BC cells are inserted;
 the Stockdon-on-bzs hack is removed (SnapWave replaces it). Phase 2 forcings
 (wind, pressure, AORC rain, USGS discharge, CN infiltration) and Phase 3
@@ -36,8 +44,8 @@ import os
 from pathlib import Path
 
 ROOT = Path(os.environ.get("NJ_ROOT", Path(__file__).resolve().parents[1]))
-SRC = ROOT / "notebooks/sfincs-asbury-sandy.ipynb"
-DST = ROOT / "notebooks/sfincs-asbury-sandy-quadtree.ipynb"
+SRC = ROOT / "notebooks/archive/sfincs-asbury-sandy.ipynb"
+DST = ROOT / "notebooks/sfincs-nj-sandy.ipynb"
 
 
 def code(src: str):

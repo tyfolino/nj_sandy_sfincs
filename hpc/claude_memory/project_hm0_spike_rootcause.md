@@ -37,7 +37,7 @@ Added Tim Leijnse's full physics block (gamma=0.78, alpha=1.0, hmin=0.01, niter=
 Single-point ASCII snapwave.bnd; mask boundary via `quadtree_mask.create_boundary(btype="waterlevel", zmax=-4)` and `(model='snapwave', btype="waves", zmax=-4, connectivity=4)`; refinement via `quadtree_grid.create(..., refinement_polygons=gdf)` with `refinement_level` column. Reference for the X2 seaward-extension build.
 
 ## X1 ported into the notebook (2026-06-01)
-The working X1 SnapWave setup was previously only in `/tmp/x1_relocate_inputs.py` (since cleared) — the notebook still had the OLD broken `create_from_grid` cell + a stale "wavebnd flip" workaround. Ported X1 into `notebooks/sfincs-asbury-sandy-quadtree.ipynb` (now 71 cells, was 73) so it's reproducible:
+The working X1 SnapWave setup was previously only in `/tmp/x1_relocate_inputs.py` (since cleared) — the notebook still had the OLD broken `create_from_grid` cell + a stale "wavebnd flip" workaround. Ported X1 into `notebooks/sfincs-nj-sandy.ipynb` (now 71 cells, was 73) so it's reproducible:
 - **snapwave_mask = SFINCS mask** (was: wider −50 m mask + −15 m wavebnd + flip workaround). Verified the on-disk X1 had snapwave_mask byte-identical to SFINCS mask.
 - **Boundary input points**: seaward (Atlantic) edge of the mask==2 boundary — bin by northing, take easternmost cell per bin (avoids bay/western boundary). Matches on-disk X1 points to 84 m.
 - **Uniform ERA5 forcing** from node (−74.0, 40.0) (only valid offshore node; 40.5 are NaN), broadcast to 7 points, written as ASCII snapwave.{bnd,bhs,btp,bwd,bds} in the post-write "finalize" cell.
