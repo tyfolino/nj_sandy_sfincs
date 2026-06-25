@@ -9,7 +9,7 @@
 #   ./hpc/vscode_node.sh --status              # show the node you're holding (if any)
 #   ./hpc/vscode_node.sh --stop                # release the allocation
 #
-# Defaults: -p main-redhat -c 24 --mem 128G -t 08:00:00
+# Defaults: -p main-redhat -c 32 --mem 128G -t 08:00:00
 #   main-redhat node tiers: 192 GB / 256 GB / 512 GB (max single-node ~500G).
 #
 # ─────────────────────────────────────────────────────────────────────────────
@@ -37,7 +37,7 @@ set -uo pipefail
 PROJ="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 
 PART="${VSCODE_PART:-main-redhat}"
-CORES="${VSCODE_CORES:-24}"
+CORES="${VSCODE_CORES:-32}"
 MEM="${VSCODE_MEM:-128G}"
 TIME="${VSCODE_TIME:-08:00:00}"
 JOB="vscode"
