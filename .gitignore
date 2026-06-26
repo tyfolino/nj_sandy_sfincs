@@ -1,5 +1,6 @@
 # Model output (large, root-owned after Docker run)
 model_quadtree/
+model_quadtree_x2/
 
 # Data (large rasters)
 data/
