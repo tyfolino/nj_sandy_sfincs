@@ -1,4 +1,7 @@
 # Model output (large, root-owned after Docker run)
+# The guide notebook writes its build here; one conventional output dir.
+model/
+# legacy output dirs (now under archive/models/, kept out of git)
 model_quadtree/
 model_quadtree_x2/
 
@@ -29,5 +32,8 @@ hydromt_sfincs/
 *.tar
 # known-good model backup (large outputs)
 model_quadtree.good/
+
+# Archived old models + bloated legacy notebooks (junk drawer; large, not tracked)
+archive/
 # nbconvert --execute artifacts
 notebooks/*.executed.ipynb
