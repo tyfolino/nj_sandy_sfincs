@@ -1,6 +1,9 @@
 # Model output (large, root-owned after Docker run)
 # The guide notebook writes its build here; one conventional output dir.
 model/
+# Experiment sweep output (built models + solver output + report); reproducible
+# from run_experiments.py, so kept out of git like model/.
+experiments/
 # legacy output dirs (now under archive/models/, kept out of git)
 model_quadtree/
 model_quadtree_x2/
