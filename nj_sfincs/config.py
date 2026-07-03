@@ -52,6 +52,13 @@ class BaseConfig:
     reclass_table: Path = DATA / "roughness" / "NLCD_CONUS_mapping.csv"
     container_sif: Path = ROOT / "sfincs-desktop.sif"
 
+    # Reproducibility: if set to a pre-built static-mesh dir, build_static COPIES
+    # it instead of rebuilding the quadtree (which is environment-sensitive — two
+    # builds can differ by ~18 cells → CSI ±0.04). Freeze once with
+    # scripts/freeze_mesh.py, then point this here so the harness AND notebook
+    # share one identical grid. None = build fresh each time (current default).
+    frozen_mesh: Path | None = None
+
     # ── Grid ─────────────────────────────────────────────────────────────────
     crs: str = "utm"  # let hydromt pick the UTM zone (→ 32618 here)
     base_res: int = 200  # level-0 cell size [m]; refined down to ~25 m

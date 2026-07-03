@@ -193,10 +193,22 @@ def sandy_hook_bay_hm0(mod) -> dict:
     return out
 
 
-def evaluate(model_dir: Path, data_dir: Path = DATA) -> dict:
-    """Full metric row for one experiment. Robust: missing pieces → NaN."""
+def evaluate(model_dir: Path, data_dir: Path = DATA,
+             gallery_tif: Path | None = None) -> dict:
+    """Full metric row for one experiment. Robust: missing pieces → NaN.
+
+    If ``gallery_tif`` is given, the *masked* (permanent water dropped, north-up)
+    ``da_hmax`` is written there for the report/notebook gallery — so the figure
+    shows flooding on land, not the full water column of the bay/ocean. This is
+    the same ``dep > -0.5`` display raster the notebook and HWM/CSI figures use;
+    the raw ``floodmap_hmax_lev3.tif`` in the run dir stays unmasked.
+    """
     row: dict = {}
     mod, da_hmax, da_dep = load_floodmap(model_dir)
+
+    if gallery_tif is not None:
+        Path(gallery_tif).parent.mkdir(parents=True, exist_ok=True)
+        da_hmax.rio.to_raster(gallery_tif)
 
     for fn, args in [
         (gauge_peak_error, (mod, data_dir)),

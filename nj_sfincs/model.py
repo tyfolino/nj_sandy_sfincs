@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import gc
 import os
+import shutil
 from pathlib import Path
 
 import geopandas as gpd
@@ -51,6 +52,23 @@ def build_static(base: BaseConfig, template_dir: Path) -> None:
     """
     template_dir = Path(template_dir)
     template_dir.mkdir(parents=True, exist_ok=True)
+
+    # Reproducibility short-circuit: the quadtree grid+subgrid build is
+    # environment-sensitive — two builds of identical code/config can differ by
+    # ~18 cells, which shifts CSI ~0.04 (notebook 0.54 vs harness 0.50; see
+    # project memory). If a frozen static mesh is provided, copy it verbatim so
+    # every run — harness AND notebook — shares ONE identical grid. Freeze once
+    # with scripts/freeze_mesh.py; point BaseConfig.frozen_mesh at the result.
+    if base.frozen_mesh is not None:
+        frozen = Path(base.frozen_mesh)
+        if not (frozen / "sfincs.inp").exists():
+            raise FileNotFoundError(
+                f"BaseConfig.frozen_mesh={frozen} has no sfincs.inp — "
+                f"build it first with scripts/freeze_mesh.py"
+            )
+        print(f"[build_static] reusing frozen mesh from {frozen} (no rebuild)")
+        shutil.copytree(frozen, template_dir, dirs_exist_ok=True)
+        return
 
     log.initialize_logging()
     log.set_log_level(log_level=30)  # warnings + errors only (quiet build)

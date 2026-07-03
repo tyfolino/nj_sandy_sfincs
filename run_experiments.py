@@ -108,10 +108,9 @@ def collect_metrics(names: list[str]) -> pd.DataFrame:
             continue
         print(f"[{name}] validating ...")
         try:
-            rows[name] = validate.evaluate(exp_dir)
-            fm = exp_dir / "floodmap_hmax_lev3.tif"
-            if fm.exists():
-                shutil.copy(fm, FLOODMAPS / f"{name}_hmax_lev3.tif")
+            rows[name] = validate.evaluate(
+                exp_dir, gallery_tif=FLOODMAPS / f"{name}_hmax_lev3.tif"
+            )
         except Exception as e:  # noqa: BLE001
             print(f"[{name}] validation failed: {e}")
             rows[name] = {"error": str(e)}
