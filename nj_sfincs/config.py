@@ -54,10 +54,10 @@ class BaseConfig:
 
     # Reproducibility: if set to a pre-built static-mesh dir, build_static COPIES
     # it instead of rebuilding the quadtree (which is environment-sensitive — two
-    # builds can differ by ~18 cells → CSI ±0.04). Freeze once with
-    # scripts/freeze_mesh.py, then point this here so the harness AND notebook
-    # share one identical grid. None = build fresh each time (current default).
-    frozen_mesh: Path | None = None
+    # builds can differ by ~18 cells → CSI ±0.04). Frozen 2026-07-03 via
+    # scripts/freeze_mesh.py (547,267-cell deterministic grid) so the harness AND
+    # notebook share one identical mesh. Set to None to build fresh each time.
+    frozen_mesh: Path | None = DATA / "frozen_mesh"
 
     # ── Grid ─────────────────────────────────────────────────────────────────
     crs: str = "utm"  # let hydromt pick the UTM zone (→ 32618 here)
