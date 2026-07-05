@@ -87,6 +87,31 @@ def gauge_peak_error(mod, data_dir: Path = DATA) -> dict:
     }
 
 
+def shrewsbury_gauge_peak(mod) -> dict:
+    """USGS 01407600 Shrewsbury R @ Sea Bright — modeled peak vs observed Sandy crest.
+
+    Observed historic crest 11.73 ft MLLW = 2.935 m NAVD88 (NWS flood-impacts page;
+    converted via NOAA VDatum geoid18 at 40.3656,-73.9747, where MLLW is 0.640 m below
+    NAVD88). The gauge's NWIS telemetry (param 72279) failed 2012-10-29 03:54 — before
+    Sandy's peak — so this is a fixed crest value, not a time series. It anchors the
+    in-river conveyance deficit on an instrument (vs the noisier back-bay HWMs); the
+    modeled peak is compared against it at the co-located obs point.
+    """
+    SHREWSBURY_CREST_NAVD88 = 2.935
+    point_zs = mod.output.data["point_zs"]
+    names = [
+        n.decode() if isinstance(n, bytes) else str(n)
+        for n in point_zs["station_name"].values
+    ]
+    i = next(k for k, n in enumerate(names) if "usgs_tidal_sea_bright" in n)
+    mod_peak = float(point_zs.isel(stations=i).max())
+    return {
+        "shrewsbury_obs_crest_m": SHREWSBURY_CREST_NAVD88,
+        "shrewsbury_mod_peak_m": mod_peak,
+        "shrewsbury_peak_err_m": mod_peak - SHREWSBURY_CREST_NAVD88,
+    }
+
+
 def hwm_metrics(da_hmax, da_dep, data_dir: Path = DATA) -> dict:
     """USGS High Water Mark residuals: RMSE/bias/within-0.5 m (headline q<=2)."""
     GROUND_CAP = 0.5
@@ -212,6 +237,7 @@ def evaluate(model_dir: Path, data_dir: Path = DATA,
 
     for fn, args in [
         (gauge_peak_error, (mod, data_dir)),
+        (shrewsbury_gauge_peak, (mod,)),
         (hwm_metrics, (da_hmax, da_dep, data_dir)),
         (motf_metrics, (da_hmax, da_dep, data_dir)),
         (sandy_hook_bay_hm0, (mod,)),

@@ -161,6 +161,18 @@ EXPERIMENTS: dict[str, Experiment] = {
         "wind_waves + Tim's SnapWave physics (gamma=0.78, alpha=1.0, fw=0.02, "
         "hmin=0.01, dtheta=5, niter=100).",
     ),
+    "snapwave_tuned_wavemaker": Experiment(
+        "snapwave_tuned_wavemaker",
+        WaveConfig(
+            use_waves=True,
+            wave_wind=True,
+            wave_igwaves=False,
+            wavemaker=True,
+            tune_physics=True,
+        ),
+        "snapwave_tuned + an ocean-side wavemaker, IG off — the premier config "
+        "with the forcing upper-bound bracket (vs plain snapwave_tuned).",
+    ),
     "igwaves": Experiment(
         "igwaves",
         WaveConfig(
