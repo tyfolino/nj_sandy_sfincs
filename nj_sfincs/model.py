@@ -141,7 +141,7 @@ def build_static(base: BaseConfig, template_dir: Path) -> None:
         geometry=[
             Point(-74.0091, 40.4669),  # NOAA 8531680
             Point(-73.97304, 40.37222),  # USGS storm-tide (co-located)
-            Point(-73.9747, 40.3656),  # USGS 1407600
+            Point(-73.97494, 40.36557),  # USGS 1407600 (nudged 21 m into the -4.2 m channel cell; the raw gauge coord lands on a +1.46 m bank cell → dry-at-low-tide, invalid gauge/tidal signal)
             Point(-74.0261, 40.1856),  # USGS 1407770
         ],
         crs="EPSG:4326",

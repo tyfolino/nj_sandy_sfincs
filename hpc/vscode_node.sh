@@ -3,6 +3,14 @@
 # so you can attach desktop VSCode (Remote-SSH) to it and run the notebook + Claude
 # Code on the node — never on the login node.
 #
+# After the node is ready, the sfincs env tarball (sfincs-env.tar.gz) is unpacked
+# to /tmp/$USER/sfincs on the compute node so Python imports hit local disk instead
+# of GPFS — pandas goes from ~16s → ~1s. A "Python (sfincs-local)" Jupyter kernel
+# is registered pointing at that local env.
+#
+# ONE-TIME SETUP before first use:
+#   ./hpc/pack-env.sh          # ~3 min; redo after any micromamba install into sfincs
+#
 # USAGE (run on an Amarel login node, from the repo root or anywhere):
 #   ./hpc/vscode_node.sh                       # allocate w/ defaults, print connect info
 #   ./hpc/vscode_node.sh -m 250G -t 12:00:00   # override memory / walltime
@@ -95,6 +103,38 @@ if [[ -z "$node" ]]; then
   exit 0
 fi
 
+# ── Deploy sfincs env to compute node local /tmp ──────────────────────────────
+TARBALL="$PROJ/sfincs-env.tar.gz"
+LOCAL_ENV="/tmp/$USER/sfincs"
+
+if [[ ! -f "$TARBALL" ]]; then
+  echo "WARNING: $TARBALL not found — skipping local env deploy."
+  echo "         Run ./hpc/pack-env.sh once to enable fast imports."
+else
+  echo "Deploying sfincs env to $node:$LOCAL_ENV ..."
+  ssh -o StrictHostKeyChecking=no "$node" bash <<ENDSSH
+    set -euo pipefail
+    if [[ -d "$LOCAL_ENV" ]]; then
+      echo "  local env already present, skipping unpack."
+    else
+      mkdir -p "$LOCAL_ENV"
+      echo "  unpacking $(du -sh "$TARBALL" | cut -f1) tarball..."
+      tar -xzf "$TARBALL" -C "$LOCAL_ENV"
+      # Fix hardcoded paths left by conda-pack
+      "$LOCAL_ENV/bin/conda-unpack"
+      # Wire in the editable hydromt_sfincs (skipped by conda-pack) via a .pth file
+      SITELIB=\$("$LOCAL_ENV/bin/python" -c "import sysconfig; print(sysconfig.get_path('purelib'))")
+      echo "$PROJ/hydromt_sfincs" > "\$SITELIB/hydromt_sfincs_editable.pth"
+      echo "  registering Jupyter kernel..."
+      "$LOCAL_ENV/bin/python" -m ipykernel install --user \
+        --name sfincs-local --display-name "Python (sfincs-local)"
+      echo "  done."
+    fi
+ENDSSH
+  echo "Env ready on $node."
+fi
+# ─────────────────────────────────────────────────────────────────────────────
+
 cat <<EOF
 
   ✔ compute node ready:  $node
@@ -103,11 +143,11 @@ cat <<EOF
   → Desktop VSCode:  Remote-SSH: Connect to Host…  →  amarel-job
     (Option-A ssh config: set  HostName $node  first; Option-B resolves it automatically.)
 
-  In the VSCode terminal (running on $node) you can launch  claude  as usual,
-  and select the "Python (sfincs)" kernel for the notebook.
-    If that kernel isn't listed, register it once:
-      $PROJ/micromamba/envs/sfincs/bin/python -m ipykernel install --user \\
-        --name sfincs --display-name "Python (sfincs)"
+  In VSCode, select the "Python (sfincs-local)" kernel — it runs from local /tmp
+  on the compute node so imports are fast (no GPFS metadata overhead).
+
+  The GPFS-backed "Python (sfincs)" kernel still works if you need it, but will
+  be slow. Re-run this script if you switch to a new compute node mid-session.
 
   Heavy SFINCS solves still go to a batch job:  sbatch hpc/sfincs_run.slurm <model_dir>
   When finished, free the node:  $0 --stop

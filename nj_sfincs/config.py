@@ -57,7 +57,12 @@ class BaseConfig:
     # builds can differ by ~18 cells → CSI ±0.04). Frozen 2026-07-03 via
     # scripts/freeze_mesh.py (547,267-cell deterministic grid) so the harness AND
     # notebook share one identical mesh. Set to None to build fresh each time.
-    frozen_mesh: Path | None = DATA / "frozen_mesh"
+    # Override the dir via NJ_FROZEN_MESH (relative to ROOT or absolute) to A/B an
+    # alternate mesh, e.g. NJ_FROZEN_MESH=data/frozen_mesh_L4 for the narrows-L4 run.
+    frozen_mesh: Path | None = (
+        (ROOT / os.environ["NJ_FROZEN_MESH"]) if os.environ.get("NJ_FROZEN_MESH")
+        else DATA / "frozen_mesh"
+    )
 
     # ── Grid ─────────────────────────────────────────────────────────────────
     crs: str = "utm"  # let hydromt pick the UTM zone (→ 32618 here)
