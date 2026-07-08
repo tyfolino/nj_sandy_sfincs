@@ -23,6 +23,7 @@ import pandas as pd
 import rasterio
 import rioxarray  # noqa: F401  (registers .rio)
 import xarray as xr
+from pyproj import Transformer
 from shapely.geometry import box
 
 from hydromt_sfincs import SfincsModel, utils
@@ -36,6 +37,68 @@ DATA = ROOT / "data"
 SANDY_HOOK_BAY_BOX_LL = (-74.075, 40.420, -73.980, 40.480)
 
 DEPTH_MIN = 0.15  # m; a cell counts as "wet" above this (HWM + MOTF)
+
+# ── HWM hydraulic-basin partition (Workstream A2) ─────────────────────────────
+# Split the 31 Sandy HWMs by hydraulic basin so the pooled RMSE stops blending
+# the ocean-front marks (surge delivered directly, model gets them right) with
+# the behind-the-barrier Shrewsbury/Navesink marks (the conveyance test). All in
+# UTM 18N (EPSG:32618); coordinate thresholds, not a fragile hand-drawn polygon.
+# The Sea Bright/Monmouth barrier & open coast run NNE, so the ocean<->estuary
+# divide is a SLOPED easting, not a fixed one.
+HWM_SOUTH_Y = 4_458_000   # below this = south coast (Shark R + Belmar/Avon), a separate system
+HWM_BAY_Y = 4_474_000     # above this = open Sandy Hook / Raritan Bay
+HWM_BARRIER_X0 = 586_000  # barrier easting at y = HWM_BARRIER_Y0 ...
+HWM_BARRIER_Y0 = 4_456_000
+HWM_BARRIER_SLOPE = 0.075  # ... rising 0.075 m east per m north (barrier axis)
+
+HWM_BASINS = ("atlantic_oceanfront", "shrewsbury_navesink", "sandy_hook_bay", "south_coast")
+
+
+def classify_hwm_basin(x: np.ndarray, y: np.ndarray) -> np.ndarray:
+    """Label each HWM (UTM 18N easting/northing) by hydraulic basin.
+
+    ``shrewsbury_navesink`` is the behind-Sea-Bright-barrier estuary = the
+    conveyance-deficit test group; ``atlantic_oceanfront`` is the wave/surge-
+    exposed Sea Bright/Monmouth barrier the model gets right.
+    """
+    x = np.asarray(x, float)
+    y = np.asarray(y, float)
+    barrier = HWM_BARRIER_X0 + HWM_BARRIER_SLOPE * (y - HWM_BARRIER_Y0)
+    basin = np.full(len(x), "shrewsbury_navesink", dtype=object)
+    basin[y < HWM_SOUTH_Y] = "south_coast"
+    north = y >= HWM_SOUTH_Y
+    basin[north & (y > HWM_BAY_Y)] = "sandy_hook_bay"
+    basin[north & (y <= HWM_BAY_Y) & (x > barrier)] = "atlantic_oceanfront"
+    return basin
+
+
+def _prestorm_window(map_times: np.ndarray, hours: float = 24.0):
+    """Clean tidal window = first ``hours`` of the run (before the surge ramp)."""
+    t0 = map_times.min()
+    return t0, t0 + np.timedelta64(int(hours * 3600), "s")
+
+
+def _wet_channel_cells(model_dir: Path, lon: float, lat: float,
+                       radius: float = 150.0, bed_max: float = -1.0):
+    """Model face indices of wet channel cells within ``radius`` m of a gauge.
+
+    B (2026-07-08) showed the SFINCS observation points snap to DRY high-ground
+    cells (point_zb up to +2 m), so his-based interior gauge series are dry-cell
+    artifacts. Sample the map at genuine channel cells (bed < ``bed_max``) near
+    the gauge's TRUE coordinate instead. Returns ``(idx, dist, bed)`` or None.
+    """
+    grid = xr.open_dataset(Path(model_dir) / "sfincs.nc")
+    fx = grid["mesh2d_face_x"].values
+    fy = grid["mesh2d_face_y"].values
+    z = grid["z"].values
+    mask = grid["mask"].values
+    gx, gy = Transformer.from_crs(4326, 32618, always_xy=True).transform(lon, lat)
+    r = np.hypot(fx - gx, fy - gy)
+    sel = (r < radius) & (mask > 0) & (z < bed_max)
+    idx = np.where(sel)[0]
+    if idx.size == 0:
+        return None
+    return idx, r[idx], z[idx]
 
 
 def load_floodmap(model_dir: Path):
@@ -76,29 +139,63 @@ def gauge_peak_error(mod, data_dir: Path = DATA) -> dict:
 
     i_sh = next(k for k, n in enumerate(names) if "sandy_hook" in n)
     mod_sh = point_zs.isel(stations=i_sh)
+    # The Sandy Hook gauge died 2012-10-29 23:00 on the RISING limb (last read
+    # ~2.81 m), before Sandy's peak. Comparing model peak to obs over the whole
+    # run understates the model (obs is truncated). Report BOTH: (a) the honest
+    # pre-failure comparison at the gauge's last-good time, and (b) the model's
+    # true full-window peak (which the dead gauge never saw). Do NOT read the
+    # truncated full-run diff as a model error. See [[project_shrewsbury_reinvestigation]].
     gauge_end = pd.Timestamp("2012-10-29 23:00")
 
-    obs_peak = float(obs_sh.max())
-    mod_peak = float(mod_sh.sel(time=slice(None, gauge_end)).max())
+    obs_peak = float(obs_sh.max())                                  # truncated (pre-failure)
+    mod_peak_prefail = float(mod_sh.sel(time=slice(None, gauge_end)).max())
+    mod_peak_full = float(mod_sh.max())                             # true model peak, post-failure
     return {
         "gauge_obs_peak_m": obs_peak,
-        "gauge_mod_peak_m": mod_peak,
-        "gauge_peak_err_m": mod_peak - obs_peak,
+        "gauge_mod_peak_prefail_m": mod_peak_prefail,
+        "gauge_peak_err_prefail_m": mod_peak_prefail - obs_peak,
+        "gauge_mod_peak_full_m": mod_peak_full,
     }
+
+
+# Observed historic crest at USGS 01407600 (Shrewsbury R @ Sea Bright). The NWS
+# flood page lists 11.73 ft; its datum is CONFIRMED MLLW (Workstream A1, 2026-07-08):
+# the NWS/NOAA gauge sbin4 for this site is published "(IN MLLW)"
+# (water.noaa.gov/gauges/sbin4), distinct from USGS NWIS param 72279 which is NAVD88.
+# So the MLLW -> NAVD88 conversion below is correct; 2.935 m NAVD88 and the ~-0.67 m
+# deficit stand. Offset from NOAA VDatum (geoid18, MLLW 0.640 m below NAVD88 at
+# 40.3656,-73.9747) — the offset value is the only remaining un-cross-checked link.
+SHREWSBURY_CREST_FT = 11.73
+SHREWSBURY_MLLW_BELOW_NAVD88_M = 0.640
+FT_TO_M = 0.3048
+SHREWSBURY_CREST_NAVD88 = SHREWSBURY_CREST_FT * FT_TO_M - SHREWSBURY_MLLW_BELOW_NAVD88_M  # 2.935
+
+CREST_DATUM_NOTE = (
+    "Shrewsbury crest 11.73 ft is MLLW (CONFIRMED: NWS gauge sbin4 published 'IN MLLW'; "
+    "USGS NWIS param 72279 is a separate NAVD88 feed). Re-derivation: "
+    "11.73 ft x 0.3048 - 0.640 (VDatum MLLW below NAVD88) = 2.935 m NAVD88."
+)
 
 
 def shrewsbury_gauge_peak(mod) -> dict:
     """USGS 01407600 Shrewsbury R @ Sea Bright — modeled peak vs observed Sandy crest.
 
-    Observed historic crest 11.73 ft MLLW = 2.935 m NAVD88 (NWS flood-impacts page;
-    converted via NOAA VDatum geoid18 at 40.3656,-73.9747, where MLLW is 0.640 m below
-    NAVD88). The gauge's NWIS telemetry (param 72279) failed 2012-10-29 03:54 — before
-    Sandy's peak — so this is a fixed crest value, not a time series. It anchors the
-    in-river conveyance deficit on an instrument (vs the noisier back-bay HWMs); the
-    modeled peak is compared against it at the co-located obs point.
+    Observed crest is a fixed value (gauge telemetry, param 72279, failed
+    2012-10-29 03:54, before Sandy's peak), not a time series. It anchors the
+    in-river conveyance deficit on an instrument (vs the noisier back-bay HWMs).
+
+    Workstream A4 — report the gauge-nudge explicitly: ``usgs_tidal_sea_bright``
+    was nudged 21 m toward the -4.2 m channel (model.py:144), but SFINCS still
+    snapped the obs point to a +1.38 m BANK cell (``shrewsbury_his_cell_zb_m``).
+    This matters for the tidal RANGE (that cell dries at low water -> use
+    ``tidal_range_metric`` at channel cells, not this point) but NOT for the surge
+    PEAK reported here: at peak the local water surface is continuous, so a bank
+    cell and the adjacent channel share the same zs. The his series is 10-min
+    (captures the true peak); the hourly map would alias it. So the his peak is
+    the right modeled peak here.
     """
-    SHREWSBURY_CREST_NAVD88 = 2.935
     point_zs = mod.output.data["point_zs"]
+    point_zb = mod.output.data["point_zb"]
     names = [
         n.decode() if isinstance(n, bytes) else str(n)
         for n in point_zs["station_name"].values
@@ -106,10 +203,61 @@ def shrewsbury_gauge_peak(mod) -> dict:
     i = next(k for k, n in enumerate(names) if "usgs_tidal_sea_bright" in n)
     mod_peak = float(point_zs.isel(stations=i).max())
     return {
-        "shrewsbury_obs_crest_m": SHREWSBURY_CREST_NAVD88,
+        "shrewsbury_obs_crest_m": round(SHREWSBURY_CREST_NAVD88, 3),
+        "shrewsbury_crest_datum_note": CREST_DATUM_NOTE,
         "shrewsbury_mod_peak_m": mod_peak,
         "shrewsbury_peak_err_m": mod_peak - SHREWSBURY_CREST_NAVD88,
+        "shrewsbury_his_cell_zb_m": float(np.asarray(point_zb.isel(stations=i).values).item()),
     }
+
+
+def tidal_range_metric(model_dir: Path, data_dir: Path = DATA,
+                       window_hours: float = 24.0) -> dict:
+    """Modeled vs observed pre-storm tidal RANGE at the in-domain USGS gauges.
+
+    Workstream A3. Turns the one-off "interior range ~0.9 vs obs ~1.5 = over-
+    damped" figure into a reproducible metric. Observed range from
+    ``usgs_sandy_tidal_nj`` (01407600 Shrewsbury, 01407770 Shark R; NAVD88 m,
+    pre-storm only). Modeled range from the map at genuine wet channel cells near
+    each gauge (NOT the dry his obs points — see B). Both over the same clean
+    tidal window (first ``window_hours`` of the run, before the surge ramp).
+
+    Caveat: map output is hourly, so the modeled range is a mild UNDER-estimate
+    (semidiurnal peaks/troughs can fall between samples); the qualitative
+    over-damping (~0.7 m short at Shrewsbury) far exceeds that aliasing.
+    """
+    gauges = {
+        "shrewsbury_01407600": (-73.97470, 40.36560, 1407600),
+        "shark_r_01407770": (-74.02610, 40.18560, 1407770),
+    }
+    obs = xr.open_dataset(str(Path(data_dir) / "gtsm" / "usgs_sandy_tidal_nj.nc"))
+    mp = xr.open_dataset(Path(model_dir) / "sfincs_map.nc")
+    t0, t1 = _prestorm_window(mp["time"].values, window_hours)
+    tsel = (mp["time"].values >= t0) & (mp["time"].values <= t1)
+    ot = obs["time"].values
+    osel = (ot >= t0) & (ot <= t1)
+
+    out: dict = {}
+    for name, (lon, lat, sid) in gauges.items():
+        # observed range over the same window
+        ow = obs["waterlevel"].sel(stations=sid).values[osel]
+        ow = ow[np.isfinite(ow)]
+        obs_range = float(ow.max() - ow.min()) if ow.size else float("nan")
+        out[f"tide_obs_range_{name}_m"] = round(obs_range, 3)
+
+        # modeled range at continuously-wet channel cells
+        mod_range = float("nan")
+        cells = _wet_channel_cells(model_dir, lon, lat)
+        if cells is not None:
+            idx, _, _ = cells
+            zsw = mp["zs"].isel(time=tsel, nmesh2d_face=idx).values  # (nt, ncell)
+            full = np.isfinite(zsw).all(axis=0)
+            if full.any():
+                cols = zsw[:, full]
+                mod_range = float(np.median(cols.max(axis=0) - cols.min(axis=0)))
+        out[f"tide_mod_range_{name}_m"] = round(mod_range, 3)
+        out[f"tide_range_damping_{name}_m"] = round(obs_range - mod_range, 3)
+    return out
 
 
 def hwm_metrics(da_hmax, da_dep, data_dir: Path = DATA) -> dict:
@@ -144,13 +292,25 @@ def hwm_metrics(da_hmax, da_dep, data_dir: Path = DATA) -> dict:
     resid = mod_wse - obs
     head = wet & (qual <= 2)
     r = resid[head]
-    return {
+    result = {
         "hwm_n_wet": int(wet.sum()),
         "hwm_n_dry": int((~wet).sum()),
         "hwm_rmse_m": float(np.sqrt((r ** 2).mean())) if head.any() else float("nan"),
         "hwm_bias_m": float(r.mean()) if head.any() else float("nan"),
         "hwm_within0.5": float(np.mean(np.abs(r) < 0.5)) if head.any() else float("nan"),
     }
+
+    # A2 — per-basin residuals (q<=2, wet). Pooled bias ~0 hides that the
+    # ocean-front basin validates while the behind-barrier Shrewsbury/Navesink
+    # basin under-fills; this partition is the real conveyance verdict.
+    basin = classify_hwm_basin(hwm.geometry.x.values, hwm.geometry.y.values)
+    for b in HWM_BASINS:
+        m = head & (basin == b)
+        rb = resid[m]
+        result[f"hwm_n_{b}"] = int(m.sum())
+        result[f"hwm_bias_{b}_m"] = float(rb.mean()) if m.any() else float("nan")
+        result[f"hwm_rmse_{b}_m"] = float(np.sqrt((rb ** 2).mean())) if m.any() else float("nan")
+    return result
 
 
 def motf_metrics(da_hmax, da_dep, data_dir: Path = DATA) -> dict:
@@ -238,6 +398,7 @@ def evaluate(model_dir: Path, data_dir: Path = DATA,
     for fn, args in [
         (gauge_peak_error, (mod, data_dir)),
         (shrewsbury_gauge_peak, (mod,)),
+        (tidal_range_metric, (model_dir, data_dir)),
         (hwm_metrics, (da_hmax, da_dep, data_dir)),
         (motf_metrics, (da_hmax, da_dep, data_dir)),
         (sandy_hook_bay_hm0, (mod,)),
