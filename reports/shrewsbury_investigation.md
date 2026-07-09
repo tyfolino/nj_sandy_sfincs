@@ -203,13 +203,85 @@ knob we can turn.
 
 ---
 
+## Workstream C — Is water escaping out the north boundary?
+
+### What we were worried about
+
+The advisor raised a sharp question: the model's north/northwest edge (the Raritan
+Bay / New York Harbor side) is an *open* water-level boundary. What if surge water
+that should be piling into the estuary is instead **leaking out** that open edge —
+draining away head that would otherwise push the tide up the Shrewsbury and Navesink?
+If so, the under-fill would be a boundary artifact, not a conveyance problem, and
+sealing the edge would fill the rivers.
+
+### What we found — the boundary is a *source*, not a leak
+
+We measured the actual net flow of water across that boundary line directly, using
+the model's stored velocities. The result is unambiguous and points the opposite way
+from the worry:
+
+| Across the N/NW line (open run) | Value | Direction |
+|---|:--:|---|
+| Peak flow rate | 28,200 m³/s | **into** the bay (southward) |
+| Total over the storm | 1.7 billion m³ | **net inflow** from the harbor |
+
+Water flows **in** across that edge, strongest right at the surge peak — it does not
+escape. This matches what we already knew about the forcing: the boundary is pinned to
+the observed Battery water level (~3.4 m), which is *higher* than the under-filled
+estuary, so physically it can only feed water toward the rivers, never drain them.
+
+The practical consequence: **sealing the boundary can't cure the under-fill — it can
+only make things slightly worse**, because it removes real inflow. That's the reverse
+of the escape hypothesis. The formal confirmation is an A/B "wall" experiment (an
+otherwise-identical run with the north edge closed off); it is running now, and we
+expect it to show the estuary sitting a touch *lower* with the wall, not higher.
+
+### The verdict from C (pending the wall run)
+
+The direct water budget already refutes the escape hypothesis on this model: the north
+boundary is delivering water to the bay, not bleeding it away. This is one more lever
+crossed off — the deficit is not the boundary. It keeps pointing back to the same
+place: the tide and surge arrive at the estuary mouth correctly and then get damped as
+they spread across the shallow interior.
+
+---
+
+## Workstream F — Upgrading the model engine (and why it matters for waves)
+
+A new release of SFINCS — **v2.4.0 "Galibier"** (June 2026) — fixes two bugs that
+directly affect the wave physics we had tried and set aside:
+
+1. *"Fixed bug in SnapWave IG source term implementation"* — the infragravity-wave
+   generator. Every earlier infragravity ("IG") experiment we ran did so on the
+   **buggy** version, where the bay wave height blew up to absurd values (billions of
+   metres) and we concluded IG "adds nothing / is unstable." **That verdict was on
+   broken code and cannot stand as-is.**
+2. *"Fixed bug with wavemakers, with waves forced from the north"* — which also
+   affected an earlier experiment.
+
+We confirmed the new engine is already available and drops straight into our setup:
+the model's pre-computed channel/marsh tables load without any rebuild, and a
+regression run (identical inputs, new engine) is underway to confirm it reproduces
+our premier result before we trust anything new from it.
+
+**First result is already encouraging.** Re-running the infragravity experiment on
+the fixed engine, the bay wave height is now a physical few centimetres — **stable,
+no blow-up** — where the old buggy run exploded. That means IG finally gets a *fair*
+test. This won't fix the river under-fill (that's conveyance, settled above), but it
+closes a real methodological gap: we can no longer be accused of dismissing IG on the
+strength of broken code. Full evaluation follows once the run completes.
+
+---
+
 ## Still to come
 
-- **C** — Test whether water is escaping out the north/northwest boundary (a
-  water-budget check plus a "wall off the boundary" experiment).
-- **D** — Test whether stronger wind would lift the estuary (±20–30% wind, and a
-  sharper hurricane wind field).
-- **F → E** — Upgrade SFINCS to the new version and re-test the infragravity-wave
-  physics on a clean build.
+- **C (finishing)** — The "wall off the boundary" A/B run is completing; it will
+  confirm the water-budget result above (expected: the estuary sits slightly *lower*
+  with the boundary sealed).
+- **D (running)** — Stronger-wind test (+20% and +30% wind drag) to see whether more
+  wind lifts the estuary toward the observations without overshooting the already-good
+  seaward levels.
+- **E (running)** — The infragravity re-test on the fixed engine (above); evaluate
+  whether it helps the open-coast wave setup now that it runs stably.
 
-*This report will be extended as C and D complete.*
+*This report will be extended as the C, D, and IG runs complete.*
