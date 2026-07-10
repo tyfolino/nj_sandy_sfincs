@@ -1,10 +1,15 @@
 """Workstream F+E — set up the Galibier regression + first IG-on run.
 
-The v2.4.0 "Galibier" container (``sfincs-cpu.sif``, the SLURM default SIF) fixes
-the SnapWave IG source term ("Fixed bug in SnapWave IG source term implementation").
-Our prior "IG adds nothing / unstable" verdict was on the buggy v2.3.3 code, so IG
-deserves a fair re-test on Galibier. Subgrid format (wet-fraction, Van Ormondt 2024)
-is unchanged since v2.1.1, so the frozen 25 m tables load without a rebuild.
+IG deserves a fair re-test on the v2.4.0 "Galibier" container (``sfincs-cpu.sif``, the
+SLURM default SIF). Subgrid format (wet-fraction, Van Ormondt 2024) is unchanged since
+v2.1.1, so the frozen 25 m tables load without a rebuild.
+
+NOTE (corrected 2026-07-10): an earlier version of this docstring credited Galibier with
+"Fixed bug in SnapWave IG source term implementation". That release note belongs to
+**v2.3.0 mt. Faber (2025.02)**, so the fix was already present in our v2.3.3 build — the
+one where IG blew up to bay Hm0 6.9e9. Galibier does empirically make IG stable (hm0ig
+max 2.7 m), but the cause is some *other* v2.4.0 change, most plausibly "Improvements of
+the integrated SnapWave solver for wave breaking ... on steeper coasts".
 
 Two runs, both derived from the completed ``snapwave_tuned_25m`` inputs (frozen
 25 m mesh reused — resolution is non-binding, +0.04 m at 12.5 m):
