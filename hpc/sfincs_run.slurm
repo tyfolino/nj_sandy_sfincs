@@ -4,8 +4,8 @@
 # Target partition is main-redhat: the RHEL 9.6 ("amarel-new") nodes. The older `main`
 # partition is CentOS 7 (glibc 2.17) and must NOT be used — see hpc/amarel_bootstrap.md.
 #SBATCH -p main-redhat
-#SBATCH -c 24
-#SBATCH --mem=24G
+#SBATCH -c 48
+#SBATCH --mem=48G
 #SBATCH -t 01:00:00
 #SBATCH -J sfincs
 #SBATCH -o logs/sfincs_%j.out
@@ -28,4 +28,8 @@ echo "model=$MODEL  sif=$SIF"
 
 # Singularity runs as the calling user, so no root-owned-output cleanup is needed
 # (unlike the old Docker workflow).
-singularity run --bind "$(realpath "$MODEL")":/data --pwd /data "$SIF"
+# Dual-socket nodes: interleave memory across both NUMA domains so the SnapWave solver
+# (which scales with cores, ~1.6x at 48 vs 16) isn't bottlenecked on one socket's memory.
+NUMA=""
+command -v numactl >/dev/null 2>&1 && NUMA="numactl --interleave=all"
+$NUMA singularity run --bind "$(realpath "$MODEL")":/data --pwd /data "$SIF"
