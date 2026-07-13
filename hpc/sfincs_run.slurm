@@ -4,8 +4,8 @@
 # Target partition is main-redhat: the RHEL 9.6 ("amarel-new") nodes. The older `main`
 # partition is CentOS 7 (glibc 2.17) and must NOT be used — see hpc/amarel_bootstrap.md.
 #SBATCH -p main-redhat
-#SBATCH -c 48
-#SBATCH --mem=48G
+#SBATCH -c 64
+#SBATCH --mem=64G
 #SBATCH -t 01:00:00
 #SBATCH -J sfincs
 #SBATCH -o logs/sfincs_%j.out

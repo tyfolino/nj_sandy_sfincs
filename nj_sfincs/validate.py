@@ -23,7 +23,8 @@ import pandas as pd
 import rasterio
 import rioxarray  # noqa: F401  (registers .rio)
 import xarray as xr
-from pyproj import Transformer
+import xugrid as xu
+from pyproj import CRS, Transformer
 from shapely.geometry import box
 
 from hydromt_sfincs import SfincsModel, utils
@@ -101,6 +102,56 @@ def _wet_channel_cells(model_dir: Path, lon: float, lat: float,
     return idx, r[idx], z[idx]
 
 
+def read_output(mod) -> None:
+    """Load sfincs_map.nc + sfincs_his.nc, tolerating BOTH SFINCS output conventions.
+
+    ``hydromt_sfincs``' own ``output.read()`` does ``crs = ds["crs"].values`` on the map,
+    which breaks on SFINCS v2.4.0 (Galibier) with ``KeyError: 'crs'``.
+
+    The irony is that Galibier's file is the *more* correct one. It declares a CF-compliant
+    ``grid_mapping = "crs"`` on its coordinate variables, so xugrid does the right thing:
+    it folds ``crs`` into the grid object (``ds.grid.crs`` is already EPSG:32618) and drops
+    it from ``data_vars``. v2.3.3 (Faber) omits ``grid_mapping``, leaving ``crs`` lying
+    around as a loose variable — which is the only reason the upstream code works there.
+
+    So take the CRS from wherever the engine actually put it: the grid object first
+    (Galibier), then a loose variable (Faber), then ``epsg`` in sfincs.inp as a backstop.
+    Without this, every spatial metric (HWM, MOTF, floodmaps) silently excludes the
+    Galibier runs.
+    """
+    root = Path(mod.root.path)
+    mod.config.read()
+    # ``output.set()`` lazily calls ``_initialize()``, which in read mode calls the very
+    # ``read()`` we are replacing — so prime the store first or we trip the same KeyError.
+    mod.output._initialize(skip_read=True)
+
+    fn_map = root / "sfincs_map.nc"
+    if fn_map.is_file():
+        ds = xu.load_dataset(fn_map)
+        ds = ds.set_coords(["mesh2d_node_x", "mesh2d_node_y"])
+        crs = ds.grid.crs                                  # Galibier: xugrid parsed it
+        if crs is None:
+            if "crs" in ds.variables:                      # Faber: loose variable
+                crs = CRS.from_user_input(int(ds["crs"].values))
+            else:                                          # backstop: the run's own inp
+                epsg = int(_inp_value(root / "sfincs.inp", "epsg"))
+                crs = CRS.from_user_input(epsg)
+            ds.grid.set_crs(crs)
+        ds = ds.drop_vars("crs", errors="ignore")
+        mod.output.set(ds, split_dataset=True)
+
+    fn_his = root / "sfincs_his.nc"
+    if fn_his.is_file():
+        mod.output.set(mod.output.read_his_file(fn_his=str(fn_his)), split_dataset=True)
+
+
+def _inp_value(inp: Path, key: str) -> str:
+    for line in inp.read_text().splitlines():
+        if "=" in line and line.split("=")[0].strip() == key:
+            return line.split("=", 1)[1].strip()
+    raise KeyError(f"{key!r} not found in {inp}")
+
+
 def load_floodmap(model_dir: Path):
     """Open the run read-only and downscale zsmax onto the L3 subgrid DEM.
 
@@ -109,7 +160,7 @@ def load_floodmap(model_dir: Path):
     """
     model_dir = Path(model_dir).resolve()
     mod = SfincsModel(str(model_dir), data_libs=[str(DATA / "data_catalog.yml")], mode="r")
-    mod.output.read()
+    read_output(mod)
 
     da_zsmax = mod.output.data["zsmax"].max(dim="timemax")
     depfile = str(model_dir / "subgrid" / "dep_subgrid_lev3.tif")
