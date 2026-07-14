@@ -46,27 +46,43 @@ DEPTH_MIN = 0.15  # m; a cell counts as "wet" above this (HWM + MOTF)
 # UTM 18N (EPSG:32618); coordinate thresholds, not a fragile hand-drawn polygon.
 # The Sea Bright/Monmouth barrier & open coast run NNE, so the ocean<->estuary
 # divide is a SLOPED easting, not a fixed one.
-HWM_SOUTH_Y = 4_458_000   # below this = south coast (Shark R + Belmar/Avon), a separate system
+HWM_SOUTH_Y = 4_458_000   # below this = south coast (Belmar/Avon ocean front + Shark R.)
 HWM_BAY_Y = 4_474_000     # above this = open Sandy Hook / Raritan Bay
 HWM_BARRIER_X0 = 586_000  # barrier easting at y = HWM_BARRIER_Y0 ...
 HWM_BARRIER_Y0 = 4_456_000
 HWM_BARRIER_SLOPE = 0.075  # ... rising 0.075 m east per m north (barrier axis)
 
-HWM_BASINS = ("atlantic_oceanfront", "shrewsbury_navesink", "sandy_hook_bay", "south_coast")
+# Shark River estuary — split OUT of south_coast (2026-07-14). These marks are fed
+# through Shark River Inlet, so their flooding is a CONVEYANCE test, exactly like
+# shrewsbury_navesink; the rest of south_coast is open Belmar/Avon ocean front where
+# surge is delivered directly. Pooling them hid the dammed inlet: the estuary marks
+# were dry (and silently dropped, see hwm_metrics), so the basin reported a
+# near-perfect -0.055 m bias while the river behind it never wetted at all.
+SHARK_N_Y = 4_450_800   # north edge of the Shark estuary (ocean-front marks lie above)
+SHARK_E_X = 584_300     # west of the inlet gorge (the sill sits at x~583,900)
+
+HWM_BASINS = (
+    "atlantic_oceanfront",
+    "shrewsbury_navesink",
+    "sandy_hook_bay",
+    "south_coast",
+    "shark_river",
+)
 
 
 def classify_hwm_basin(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     """Label each HWM (UTM 18N easting/northing) by hydraulic basin.
 
-    ``shrewsbury_navesink`` is the behind-Sea-Bright-barrier estuary = the
-    conveyance-deficit test group; ``atlantic_oceanfront`` is the wave/surge-
-    exposed Sea Bright/Monmouth barrier the model gets right.
+    ``shrewsbury_navesink`` and ``shark_river`` are the behind-barrier estuaries =
+    the conveyance test groups; ``atlantic_oceanfront`` and ``south_coast`` are the
+    wave/surge-exposed open coast, where surge is delivered directly.
     """
     x = np.asarray(x, float)
     y = np.asarray(y, float)
     barrier = HWM_BARRIER_X0 + HWM_BARRIER_SLOPE * (y - HWM_BARRIER_Y0)
     basin = np.full(len(x), "shrewsbury_navesink", dtype=object)
     basin[y < HWM_SOUTH_Y] = "south_coast"
+    basin[(y < HWM_SOUTH_Y) & (y < SHARK_N_Y) & (x < SHARK_E_X)] = "shark_river"
     north = y >= HWM_SOUTH_Y
     basin[north & (y > HWM_BAY_Y)] = "sandy_hook_bay"
     basin[north & (y <= HWM_BAY_Y) & (x > barrier)] = "atlantic_oceanfront"
@@ -77,6 +93,58 @@ def _prestorm_window(map_times: np.ndarray, hours: float = 24.0):
     """Clean tidal window = first ``hours`` of the run (before the surge ramp)."""
     t0 = map_times.min()
     return t0, t0 + np.timedelta64(int(hours * 3600), "s")
+
+
+# A tide RISES about half the time. A drain never does. This is the discriminator:
+# anything that spends less than this fraction of its samples going UP is not a tide.
+# (A clean semidiurnal signal sampled hourly gives ~0.5; even a badly over-damped
+# estuary gives >0.3. A monotonic spin-up drawdown gives ~0.0.)
+TIDE_MIN_FRAC_RISING = 0.20
+TIDE_NOISE_M = 0.005  # steps smaller than this are numerical wiggle, not motion
+
+
+def _tidal_signal(series: np.ndarray) -> dict:
+    """Decompose a water-level series into spin-up DRIFT and a true TIDAL range.
+
+    WHY THIS EXISTS (2026-07-14). The naive metric -- ``max - min`` over the first
+    24 h -- silently reported the model's monotonic SPIN-UP DRAWDOWN as if it were
+    a tide. At the Shark River gauge the "tidal range" was 1.27 m, and the series
+    behind that number was::
+
+        +0.00 -0.63 -0.86 -0.99 -1.06 ... -1.27 -1.27 -1.27
+
+    i.e. the model equilibrating from its flat initial condition, with ZERO tidal
+    oscillation -- because Shark River Inlet was dammed shut in the DEM and the
+    basin was hydraulically cut off from the ocean. ``max - min`` cannot tell a
+    tide from a drain, so it produced a plausible-looking number for a basin that
+    was not tidal at all, and the defect hid for months.
+
+    Note the trap: that drawdown is an EXPONENTIAL decay, so simply de-trending it
+    with a straight line leaves a big bowed residual (~1 m) that still looks like a
+    range, and counting turning points is defeated by numerical wiggle. Neither is
+    a safe test. The robust discriminator is the FRACTION OF TIME THE SERIES RISES:
+    a tide floods and ebbs, a drain only ebbs.
+    """
+    s = np.asarray(series, float)
+    s = s[np.isfinite(s)]
+    if s.size < 4:
+        return dict(range_m=float("nan"), drift_m=float("nan"),
+                    frac_rising=float("nan"), is_tidal=False)
+    d = np.diff(s)
+    moving = np.abs(d) > TIDE_NOISE_M          # ignore numerical chatter
+    frac_rising = float((d[moving] > 0).mean()) if moving.any() else 0.0
+    is_tidal = bool(frac_rising >= TIDE_MIN_FRAC_RISING)
+
+    # the tide itself: remove the spin-up drift, then measure what is left. Only
+    # meaningful once is_tidal has established there IS a tide to measure.
+    t = np.arange(s.size, dtype=float)
+    detr = s - np.polyval(np.polyfit(t, s, 1), t)
+    return dict(
+        range_m=float(detr.max() - detr.min()),
+        drift_m=float(s[-1] - s[0]),           # the spin-up (net drainage)
+        frac_rising=frac_rising,
+        is_tidal=is_tidal,
+    )
 
 
 def _wet_channel_cells(model_dir: Path, lon: float, lat: float,
@@ -276,6 +344,16 @@ def tidal_range_metric(model_dir: Path, data_dir: Path = DATA,
     Caveat: map output is hourly, so the modeled range is a mild UNDER-estimate
     (semidiurnal peaks/troughs can fall between samples); the qualitative
     over-damping (~0.7 m short at Shrewsbury) far exceeds that aliasing.
+
+    SPIN-UP GUARD (2026-07-14). The modelled range is now measured on the
+    DETRENDED series (see ``_tidal_signal``), because the raw ``max - min`` was
+    reporting the model's monotonic spin-up drainage as a tide -- which is how a
+    completely non-tidal, dammed-shut Shark River passed for months as a plausible
+    "1.27 m range, 0.55 m damping". Each gauge now also reports:
+
+        tide_mod_drift_<g>_m     the spin-up (net drift across the window)
+        tide_mod_is_tidal_<g>    False => the series does not oscillate at all,
+                                 and the range is NaN rather than a fabricated number
     """
     gauges = {
         "shrewsbury_01407600": (-73.97470, 40.36560, 1407600),
@@ -296,23 +374,63 @@ def tidal_range_metric(model_dir: Path, data_dir: Path = DATA,
         obs_range = float(ow.max() - ow.min()) if ow.size else float("nan")
         out[f"tide_obs_range_{name}_m"] = round(obs_range, 3)
 
-        # modeled range at continuously-wet channel cells
+        # modeled range at continuously-wet channel cells, spin-up removed
         mod_range = float("nan")
+        drift = float("nan")
+        frac_rising = float("nan")
+        is_tidal = False
         cells = _wet_channel_cells(model_dir, lon, lat)
         if cells is not None:
             idx, _, _ = cells
             zsw = mp["zs"].isel(time=tsel, nmesh2d_face=idx).values  # (nt, ncell)
             full = np.isfinite(zsw).all(axis=0)
             if full.any():
-                cols = zsw[:, full]
-                mod_range = float(np.median(cols.max(axis=0) - cols.min(axis=0)))
+                series = np.median(zsw[:, full], axis=1)   # one representative channel series
+                sig = _tidal_signal(series)
+                drift = sig["drift_m"]
+                frac_rising = sig["frac_rising"]
+                is_tidal = sig["is_tidal"]
+                # refuse to report a "range" for a series that never turns around:
+                # that is a drain (or a dead basin), not a tide.
+                mod_range = sig["range_m"] if is_tidal else float("nan")
         out[f"tide_mod_range_{name}_m"] = round(mod_range, 3)
+        out[f"tide_mod_drift_{name}_m"] = round(drift, 3)
+        out[f"tide_mod_frac_rising_{name}"] = round(frac_rising, 3)
+        out[f"tide_mod_is_tidal_{name}"] = is_tidal
         out[f"tide_range_damping_{name}_m"] = round(obs_range - mod_range, 3)
     return out
 
 
 def hwm_metrics(da_hmax, da_dep, data_dir: Path = DATA) -> dict:
-    """USGS High Water Mark residuals: RMSE/bias/within-0.5 m (headline q<=2)."""
+    """USGS High Water Mark residuals: RMSE/bias/within-0.5 m (headline q<=2).
+
+    Two families of keys are returned, and the difference between them matters:
+
+    ``*_scored`` (USE THESE)
+        Every q<=2 mark is scored. A mark the model leaves DRY is not dropped --
+        it is scored against the model's GROUND elevation there, i.e. "the model
+        says the water never got above this bed". That is the most generous
+        reading available (an upper bound on the model's skill at that mark), and
+        it is still a large negative residual whenever the observations say metres
+        of water stood there.
+
+    ``hwm_bias_m`` / ``hwm_rmse_m`` / ``hwm_*_m`` (LEGACY, wet-only)
+        The historical definition: ``wet & (qual <= 2)``. Kept so numbers in the
+        existing reports/CSVs stay comparable -- NOT to be led with.
+
+    WHY (2026-07-14). The wet-only metric **structurally rewards failing to
+    flood**: the worse the model under-floods, the more marks fall out of the
+    average, and the better the remaining average looks. It hid a real defect for
+    months -- the Shark River Inlet was dammed shut in the DEM, so 2 of the 7
+    south-coast marks sat in water the model never wetted, silently vanished, and
+    ``south_coast`` reported a near-perfect -0.055 m bias while the river behind
+    it was bone dry at +0.00 m through Hurricane Sandy.
+
+    This is the mirror image of the FEMA-MOTF POD flaw (which rewards OVER-
+    flooding). Never lead with either alone. Always read ``hwm_n_dry`` alongside
+    any bias, and treat a CHANGE in the scored-mark count between two runs as
+    invalidating the comparison.
+    """
     GROUND_CAP = 0.5
     hwm = gpd.read_file(str(data_dir / "validation" / "sandy_hwms.geojson")).to_crs(
         da_dep.rio.crs
@@ -326,7 +444,8 @@ def hwm_metrics(da_hmax, da_dep, data_dir: Path = DATA) -> dict:
 
     obs = hwm["elev_m"].values
     qual = hwm["quality"].values.astype(float)
-    mod_wse = np.full(len(obs), np.nan)
+    mod_wse = np.full(len(obs), np.nan)     # wet-only (NaN where the model is dry)
+    mod_ground = np.full(len(obs), np.nan)  # lowest ground in the window -> dry-mark score
     for k, (X, Y) in enumerate(zip(hwm.geometry.x.values, hwm.geometry.y.values)):
         col, row = int((X - T.c) / T.a), int((Y - T.f) / T.e)
         if 0 <= row < ny and 0 <= col < nx:
@@ -335,6 +454,8 @@ def hwm_metrics(da_hmax, da_dep, data_dir: Path = DATA) -> dict:
                 slice(max(0, col - rad), col + rad + 1),
             )
             ws, hh, dd = wse[sl], depth[sl], dep_arr[sl]
+            if np.isfinite(dd).any():
+                mod_ground[k] = np.nanmin(dd)   # most generous: the lowest bed nearby
             flooded = (hh >= DEPTH_MIN) & (dd <= obs[k] + GROUND_CAP)
             if flooded.any():
                 mod_wse[k] = np.nanmax(np.where(flooded, ws, np.nan))
@@ -343,7 +464,21 @@ def hwm_metrics(da_hmax, da_dep, data_dir: Path = DATA) -> dict:
     resid = mod_wse - obs
     head = wet & (qual <= 2)
     r = resid[head]
+
+    # --- the honest metric: dry marks scored at ground level, never dropped ----
+    mod_scored = np.where(wet, mod_wse, mod_ground)
+    resid_s = mod_scored - obs
+    head_s = np.isfinite(mod_scored) & (qual <= 2)   # only truly off-grid marks drop out
+    rs = resid_s[head_s]
+
     result = {
+        # headline (scored): every q<=2 mark on the grid counts
+        "hwm_n_scored": int(head_s.sum()),
+        "hwm_n_dry_scored": int((head_s & ~wet).sum()),
+        "hwm_rmse_scored_m": float(np.sqrt((rs ** 2).mean())) if head_s.any() else float("nan"),
+        "hwm_bias_scored_m": float(rs.mean()) if head_s.any() else float("nan"),
+        "hwm_within0.5_scored": float(np.mean(np.abs(rs) < 0.5)) if head_s.any() else float("nan"),
+        # legacy (wet-only) -- kept for continuity with existing reports
         "hwm_n_wet": int(wet.sum()),
         "hwm_n_dry": int((~wet).sum()),
         "hwm_rmse_m": float(np.sqrt((r ** 2).mean())) if head.any() else float("nan"),
@@ -351,9 +486,9 @@ def hwm_metrics(da_hmax, da_dep, data_dir: Path = DATA) -> dict:
         "hwm_within0.5": float(np.mean(np.abs(r) < 0.5)) if head.any() else float("nan"),
     }
 
-    # A2 — per-basin residuals (q<=2, wet). Pooled bias ~0 hides that the
-    # ocean-front basin validates while the behind-barrier Shrewsbury/Navesink
-    # basin under-fills; this partition is the real conveyance verdict.
+    # A2 — per-basin residuals. Pooled bias ~0 hides that the ocean-front basin
+    # validates while the behind-barrier Shrewsbury/Navesink basin under-fills;
+    # this partition is the real conveyance verdict.
     basin = classify_hwm_basin(hwm.geometry.x.values, hwm.geometry.y.values)
     for b in HWM_BASINS:
         m = head & (basin == b)
@@ -361,6 +496,13 @@ def hwm_metrics(da_hmax, da_dep, data_dir: Path = DATA) -> dict:
         result[f"hwm_n_{b}"] = int(m.sum())
         result[f"hwm_bias_{b}_m"] = float(rb.mean()) if m.any() else float("nan")
         result[f"hwm_rmse_{b}_m"] = float(np.sqrt((rb ** 2).mean())) if m.any() else float("nan")
+
+        ms = head_s & (basin == b)
+        rbs = resid_s[ms]
+        result[f"hwm_n_scored_{b}"] = int(ms.sum())
+        result[f"hwm_n_dry_{b}"] = int((ms & ~wet).sum())
+        result[f"hwm_bias_scored_{b}_m"] = float(rbs.mean()) if ms.any() else float("nan")
+        result[f"hwm_rmse_scored_{b}_m"] = float(np.sqrt((rbs ** 2).mean())) if ms.any() else float("nan")
     return result
 
 

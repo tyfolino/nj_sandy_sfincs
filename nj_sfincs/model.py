@@ -44,8 +44,79 @@ BAY_INCLUDE_BOX_LL = (-74.28, 40.40, -73.95, 40.52)
 # Support-point / snapwave-boundary northing cut = the Sandy Hook tip.
 SANDY_HOOK_TIP_Y = 4_476_000
 
+# A free-outflow (Neumann) BC on water deeper than this is a DRAIN, not a boundary.
+OUTFLOW_MAX_DEPTH = -1.0
+# A cell the model calls (near-)land while a real survey says there is water this deep
+# beneath it has been PAVED OVER by a failed lidar return.
+PAVED_BED_LAND = -0.5
+PAVED_SURVEY_WATER = -2.0
 
-def build_static(base: BaseConfig, template_dir: Path) -> None:
+
+def _check_domain_invariants(sf, mask, zb) -> None:
+    """Refuse to ship a domain with either of the two defects that cost us two months.
+
+    Both bugs were INFRASTRUCTURE, not physics — a region polygon and an elevation
+    tier — which is exactly why an exhaustive elimination of every *physical* lever
+    (wind, friction, mesh resolution, wave convergence, channel dredging) came back
+    null for weeks. Nobody suspects a boundary condition. So we assert them instead.
+
+    1. NO FREE-OUTFLOW BC ON OPEN WATER. The region polygon chopped the Navesink in
+       half mid-channel and hydromt put a free-outflow BC on the 5 m-deep cut face.
+       The model drained 92.5% of the estuary's entire inflow out of that hole,
+       one-way, in 100% of timesteps, from the first hour. THIS ONE CHECK WOULD HAVE
+       CAUGHT IT ON DAY ONE.
+
+    2. NO PAVED-OVER CHANNELS. `usace_nj_2010` is green lidar: in deep or turbid
+       water it fails to penetrate and returns the WATER SURFACE (~0 to +2 m), which
+       looks like land. Ranked top of the elevation list, it shadowed CUDEM's correct
+       bed and sealed Shark River Inlet — leaving the entire Shark estuary at exactly
+       +0.00 m, never flooding, through Hurricane Sandy, while the ocean 1.8 km away
+       reached +2.9 m. We check the model bed against the eHydro survey (a boat with
+       an echo sounder) wherever that survey has data.
+    """
+    import rasterio
+
+    from .config import DATA
+
+    fail = []
+
+    n_wet_out = int(((mask == 3) & (zb < OUTFLOW_MAX_DEPTH)).sum())
+    if n_wet_out:
+        fail.append(
+            f"{n_wet_out} free-outflow cells (mask=3) sit on water below "
+            f"{OUTFLOW_MAX_DEPTH} m. That is a DRAIN, not a boundary — it is the bug "
+            f"that emptied the Navesink."
+        )
+
+    tif = DATA / "elevation" / "ehydro_nj.tif"
+    if tif.exists():
+        fx, fy = sf.quadtree_grid.data.grid.face_coordinates.T
+        act = mask > 0
+        with rasterio.open(tif) as d:
+            v = np.array(
+                [r[0] for r in d.sample(zip(fx[act].tolist(), fy[act].tolist()))],
+                dtype="float64",
+            )
+            if d.nodata is not None:
+                v[v == d.nodata] = np.nan
+        v[v < -1e5] = np.nan
+        paved = (zb[act] >= PAVED_BED_LAND) & (v < PAVED_SURVEY_WATER)
+        if paved.any():
+            fail.append(
+                f"{int(paved.sum())} active cells are (near-)land in the model "
+                f"(bed >= {PAVED_BED_LAND} m) where the eHydro survey sounded water "
+                f"below {PAVED_SURVEY_WATER} m. A channel is still paved over."
+            )
+
+    if fail:
+        raise RuntimeError(
+            "[build_static] DOMAIN INVARIANTS FAILED:\n  - " + "\n  - ".join(fail)
+        )
+    print("[build_static] domain invariants OK "
+          "(no outflow BC on water; no paved-over surveyed channel)")
+
+
+def build_static(base: BaseConfig, template_dir: Path, skip_subgrid: bool = False) -> None:
     """Phase 1 — build grid/elevation/mask/subgrid and write to ``template_dir``.
 
     Forcing-independent, so it runs once; ``add_forcing`` reopens from disk.
@@ -126,7 +197,37 @@ def build_static(base: BaseConfig, template_dir: Path) -> None:
     mask[(mask == 2) & west_below_bay] = 3  # waterlevel → outflow
     mask[(mask == 2) & shrewsbury] = 1  # waterlevel → active interior
     mask[(mask == 3) & arthur_kill_north] = 2  # outflow → waterlevel (harbor-driven)
+
+    # (d) SEAL ANY FREE-OUTFLOW BC THAT LANDS ON OPEN WATER  (2026-07-14) ------
+    # A free-outflow (Neumann) boundary is the condition you use where water may
+    # leave and never return. On a DEEP CROSS-SECTION OF A TIDAL RIVER it is not a
+    # boundary, it is a DRAIN — and that is precisely the bug that wasted two
+    # months of this project. The region polygon used to chop the Navesink in half
+    # mid-channel; hydromt dutifully put mask=3 on the 5 m-deep cut face; the model
+    # then ran that face at -0.82 m/s OUT of the domain in 100% of timesteps, never
+    # once reversing, and **92.5% of everything entering the estuary vanished**.
+    # The estuary was a pipe, not a bathtub, and every "null result" in the campaign
+    # was really just a bucket with a hole in it.
+    #
+    # The region fix (west edge -> x=577,000) now lands the domain edge on dry land
+    # at the Navesink and Shark, so this should catch nothing there. It still fires
+    # at the NW/Raritan corner, which sits on the TRUE domain edge — there is no
+    # more river to enclose, so the only correct treatment is a wall.
+    #
+    # A wet outflow cell becomes an ordinary active cell (mask=1); the inactive
+    # ground beyond it is then SFINCS's default closed wall. Dry outflow cells are
+    # left alone: they legitimately let overland flood water leave the domain
+    # instead of ponding against the edge.
+    zb = sf.quadtree_grid.data["z"].values
+    wet_outflow = (mask == 3) & (zb < OUTFLOW_MAX_DEPTH)
+    if wet_outflow.any():
+        print(f"[build_static] sealing {int(wet_outflow.sum())} free-outflow cells that sit on "
+              f"water (deepest {zb[wet_outflow].min():+.2f} m) — an outflow BC on open water "
+              f"is a drain, not a boundary")
+        mask[wet_outflow] = 1
     sf.quadtree_grid.data["mask"] = sf.quadtree_grid.data["mask"].copy(data=mask)
+
+    _check_domain_invariants(sf, mask, zb)
 
     # 6. Observation points (validation gauges only) --------------------------
     val_gauges = gpd.GeoDataFrame(
@@ -149,6 +250,23 @@ def build_static(base: BaseConfig, template_dir: Path) -> None:
     sf.observation_points.create(locations=val_gauges, merge=False)
 
     # 7. Roughness + subgrid (memory/CPU peak) --------------------------------
+    if skip_subgrid:
+        # Domain-geometry dry run: everything the invariants need (grid, elevation,
+        # mask, boundaries) is already built, and the subgrid is by far the most
+        # expensive step. Used by scripts/validate_domain.py to PROVE a region /
+        # elevation change is right BEFORE paying for a full rebuild.
+        print("[build_static] skip_subgrid=True — stopping after mask/boundary (no subgrid)")
+        fx, fy = sf.quadtree_grid.data.grid.face_coordinates.T
+        np.savez(
+            template_dir / "domain_dryrun.npz",
+            x=fx, y=fy,
+            z=sf.quadtree_grid.data["z"].values,
+            mask=sf.quadtree_grid.data["mask"].values,
+        )
+        del sf
+        gc.collect()
+        return
+
     for src in list(sf.data_catalog.sources):
         s = sf.data_catalog.get_source(src)
         if hasattr(s, "_data"):

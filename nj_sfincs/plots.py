@@ -407,3 +407,159 @@ def plot_experiment_comparison(metrics_df, floodmap_dir):
     fig.suptitle("Wave-experiment comparison — max flood depth [m]", y=1.02)
     fig.tight_layout()
     return fig, axes
+
+
+# ── Engine / clamp comparison (Workstream I) ─────────────────────────────────
+# The Shrewsbury-Navesink estuary and the Sea Bright barrier that feeds it.
+# Everything the Faber-vs-Galibier argument turns on happens inside this window.
+SHREWSBURY_WINDOW = (578500, 592000, 4462000, 4482000)  # UTM 18N (x0, x1, y0, y1)
+
+
+def load_cached_floodmap(run_dir, window=SHREWSBURY_WINDOW):
+    """Read the flood-depth raster ``load_floodmap`` already downscaled to disk.
+
+    ``validate.load_floodmap`` caches ``floodmap_hmax_lev3.tif`` in the run dir but
+    writes it in the model's ROTATED frame; the de-rotation and the deep-ocean mask
+    happen afterwards, in memory. So repeat that tail here rather than reading the
+    tif raw, or the panels will not line up with each other.
+
+    CLIP BEFORE REPROJECTING. The L3 raster is 6596x11300 at 6.25 m, and de-rotating
+    the whole thing costs minutes per run; clipping to ``window`` first drops it to
+    ~0.3 s. The rotation is <1 degree, so a CRS bbox clip in the rotated frame is a
+    cheap window read that comfortably contains the target area.
+
+    Returns ``(da_hmax, da_dep)``, or ``(None, None)`` if the run has not been
+    downscaled yet — a missing tif is an expected state, not an error.
+    """
+    run_dir = Path(run_dir)
+    tif = run_dir / "floodmap_hmax_lev3.tif"
+    dep_fn = run_dir / "subgrid" / "dep_subgrid_lev3.tif"
+    if not tif.exists() or not dep_fn.exists():
+        return None, None
+    hmax = rioxarray.open_rasterio(tif, masked=True).squeeze(drop=True)
+    dep = rioxarray.open_rasterio(dep_fn, masked=True).squeeze(drop=True)
+    if window is not None:
+        x0, x1, y0, y1 = window
+        hmax = hmax.rio.clip_box(x0, y0, x1, y1)
+        dep = dep.rio.clip_box(x0, y0, x1, y1)
+    hmax = hmax.rio.reproject(hmax.rio.crs)      # de-rotate to north-up
+    dep = dep.rio.reproject_match(hmax)
+    hmax = hmax.where(dep.values > -0.5)         # drop the deep ocean
+    hmax.name = "hmax"
+    return hmax, dep
+
+
+def _extent(da):
+    """(left, right, bottom, top) for imshow, from a north-up raster."""
+    x, y = da["x"].values, da["y"].values
+    dx = abs(float(x[1] - x[0])) / 2 if x.size > 1 else 0.0
+    dy = abs(float(y[1] - y[0])) / 2 if y.size > 1 else 0.0
+    return (float(x.min()) - dx, float(x.max()) + dx,
+            float(y.min()) - dy, float(y.max()) + dy)
+
+
+def plot_engine_panels(runs, root=None, window=SHREWSBURY_WINDOW, vmax=3.0,
+                       hwm=True, ncol=None, panel_h=7.0, data_dir=DATA):
+    """Max flood depth for several runs side by side, zoomed on the estuary.
+
+    ``runs`` maps experiment dir name -> panel title. Reads the cached tifs, so it
+    is seconds rather than the minutes a re-downscale costs.
+
+    HWMs are drawn as LOCATION markers only, deliberately uncoloured: ``elev_m`` is
+    a water-surface elevation (NAVD88) while the raster is a depth, so putting them
+    on one colour scale would look meaningful and mean nothing. For the signed
+    model-minus-obs residual use ``plot_hwm_residual_map``.
+    """
+    import matplotlib.pyplot as plt
+
+    root = Path(root) if root is not None else ROOT / "experiments"
+    n = len(runs)
+    # The domain is tall and narrow (~12 x 20 km), so one row reads best and keeps
+    # the panels genuinely side by side. Size each panel to the window's aspect,
+    # otherwise most of the figure is whitespace.
+    ncol = ncol or min(4, n)
+    nrow = int(np.ceil(n / ncol))
+    aspect = (window[1] - window[0]) / (window[3] - window[2])
+    fig, axes = plt.subplots(nrow, ncol,
+                             figsize=(panel_h * aspect * ncol + 1.6, panel_h * nrow),
+                             squeeze=False, constrained_layout=True)
+
+    pts = None
+    if hwm:
+        f = Path(data_dir) / "validation" / "sandy_hwms.geojson"
+        if f.exists():
+            pts = gpd.read_file(str(f)).to_crs("EPSG:32618")
+            pts = pts[pts["quality"].astype(float) <= 2]
+
+    im = None
+    for ax, (run, title) in zip(axes.ravel(), runs.items()):
+        hmax, dep = load_cached_floodmap(root / run, window=window)
+        if hmax is None:
+            ax.text(0.5, 0.5, f"{run}\n\nnot downscaled yet", ha="center",
+                    va="center", transform=ax.transAxes, fontsize=10, color="0.4")
+            ax.set_xticks([]); ax.set_yticks([])
+            continue
+        ext = _extent(hmax)
+        # land/water context so dry ground is legible instead of blank white
+        ax.imshow(dep.values, extent=ext, origin="upper", cmap="Greys_r",
+                  vmin=-15, vmax=25, alpha=0.55, interpolation="nearest")
+        im = ax.imshow(np.where(hmax.values > 0.05, hmax.values, np.nan), extent=ext,
+                       origin="upper", cmap="Blues", vmin=0, vmax=vmax,
+                       interpolation="nearest")
+        if pts is not None:
+            ax.scatter(pts.geometry.x, pts.geometry.y, facecolor="none",
+                       edgecolor="red", s=30, linewidth=0.8, zorder=5)
+        ax.set_title(title, fontsize=10)
+        ax.set_xlim(window[0], window[1]); ax.set_ylim(window[2], window[3])
+        ax.set_aspect("equal")
+        ax.set_xticks([]); ax.set_yticks([])
+
+    for ax in axes.ravel()[n:]:
+        ax.axis("off")
+    if im is not None:
+        cb = fig.colorbar(im, ax=axes, shrink=0.55, anchor=(0, 0.5))
+        cb.set_label("max flood depth [m]")
+    fig.suptitle("Where the engines flood — Shrewsbury / Navesink estuary\n"
+                 "(red circles = USGS high-water-mark locations, quality ≤ 2)",
+                 fontsize=12)
+    return fig, axes
+
+
+def plot_engine_difference(run_a, run_b, root=None, window=SHREWSBURY_WINDOW,
+                           vlim=1.5, label_a=None, label_b=None):
+    """Depth difference b − a: WHERE one engine puts water the other does not.
+
+    Both runs must sit on the same mesh (they do, on the frozen 25 m grid), so the
+    cached rasters share a grid and subtract cleanly. Cells dry in both are masked.
+    """
+    import matplotlib.pyplot as plt
+
+    root = Path(root) if root is not None else ROOT / "experiments"
+    ha, dep = load_cached_floodmap(root / run_a, window=window)
+    hb, _ = load_cached_floodmap(root / run_b, window=window)
+    if ha is None or hb is None:
+        raise FileNotFoundError(
+            f"missing cached floodmap for {run_a if ha is None else run_b} — "
+            "run validate.load_floodmap() on it first"
+        )
+    hb = hb.rio.reproject_match(ha)
+    # A cell dry in one run and wet in the other is the whole point, so treat dry as
+    # depth 0 rather than NaN; masking only where BOTH are dry keeps those cells in.
+    a = np.where(np.isfinite(ha.values), ha.values, 0.0)
+    b = np.where(np.isfinite(hb.values), hb.values, 0.0)
+    diff = np.where((a > 0.05) | (b > 0.05), b - a, np.nan)
+
+    ext = _extent(ha)
+    fig, ax = plt.subplots(figsize=(9.5, 8.4), constrained_layout=True)
+    ax.imshow(dep.values, extent=ext, origin="upper", cmap="Greys_r",
+              vmin=-15, vmax=25, alpha=0.55, interpolation="nearest")
+    im = ax.imshow(diff, extent=ext, origin="upper", cmap="RdBu_r",
+                   vmin=-vlim, vmax=vlim, interpolation="nearest")
+    fig.colorbar(im, ax=ax, shrink=0.7).set_label("Δ max flood depth [m]")
+    ax.set_xlim(window[0], window[1]); ax.set_ylim(window[2], window[3])
+    ax.set_aspect("equal")
+    ax.set_xticks([]); ax.set_yticks([])
+    lb, la = label_b or run_b, label_a or run_a
+    ax.set_title(f"{lb}  −  {la}\nred = deeper in {lb}   ·   blue = deeper in {la}",
+                 fontsize=11)
+    return fig, ax

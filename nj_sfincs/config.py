@@ -32,9 +32,18 @@ DATA = ROOT / "data"
 # Elevation merge, top → bottom; first dataset with data wins. Verbatim from the
 # notebook. Kept as a tuple (dataclass forbids mutable list/dict defaults; a
 # tuple of dicts is fine). See data/data_catalog.yml for per-layer provenance.
+# NOTE ON ORDER (2026-07-14). The eHydro tiers MUST outrank `usace_nj_2010`, and that is the
+# whole point of them. The 2010 lidar is green (bathymetric) and returns the real bed in clear
+# shallow water — but in deep or turbid water it fails to penetrate and returns the WATER
+# SURFACE (~0 to +2 m), which is indistinguishable from land. Ranked first, those bogus returns
+# shadow CUDEM's correct bed and SEAL THE CHANNEL SHUT. That is what dammed Shark River Inlet
+# (real bed −4.6 to −10.8 m; lidar +0.4 to +2.2 m) and left the whole Shark estuary at exactly
+# +0.00 m — never flooding — through Hurricane Sandy. An eHydro survey is a boat with an echo
+# sounder: the only source here that measures the bed UNDER the water, so it goes on top.
 DEFAULT_ELEVATION_LIST: tuple[dict, ...] = (
+    {"elevation": "ehydro_nj"},  # carve Shark River Inlet (lidar paved it — see scripts/audit_paved_channels.py)
     {"elevation": "shrewsbury_ehydro_2015"},  # carve Rumson–Sea Bright bridge dam
-    {"elevation": "usace_nj_2010"},  # 1 m PRE-Sandy topobathy (top)
+    {"elevation": "usace_nj_2010"},  # 1 m PRE-Sandy topobathy (fails in deep/turbid water)
     {"elevation": "cudem_nj"},  # 3 m fill: inlets + shelf + Raritan Bay
     {"elevation": "nj_10ft_dem", "zmin": 0.001},  # 3 m fill: inland land
     {"elevation": "gmrt_nj"},  # ~50 m GMRT offshore tail
@@ -48,7 +57,22 @@ class BaseConfig:
     # ── Paths ────────────────────────────────────────────────────────────────
     data_catalog: Path = DATA / "data_catalog.yml"
     region: Path = DATA / "region.geojson"
-    refinement: Path = DATA / "quadtree" / "refinement_polygons.geojson"
+    # Quadtree refinement. Override with NJ_REFINEMENT (path relative to ROOT).
+    #
+    # ⚠️ `refinement_polygons.geojson` carries `shrewsbury_l4` + `navesink_l4` at
+    # refinement_level 4 (12.5 m), which were STAGED AFTER data/frozen_mesh was built
+    # (2026-07-03, max level 25 m). So a rebuild with it silently upgrades the estuary to
+    # 12.5 m: +123,691 faces, +33% active cells, +33% runtime on every run thereafter —
+    # a third change riding along with any other rebuild, and one that breaks comparability
+    # with every 25 m run in the campaign. L4 was measured as a NULL lever (the 12.5 m
+    # rebuild, job 57864095, moved the Shrewsbury gauge by +0.04 m).
+    #
+    # `refinement_polygons_25m.geojson` is the same file WITHOUT those two polygons, so the
+    # 2026-07-14 region+eHydro rebuild changes only what it means to change (+1,007 faces).
+    refinement: Path = (
+        (ROOT / os.environ["NJ_REFINEMENT"]) if os.environ.get("NJ_REFINEMENT")
+        else DATA / "quadtree" / "refinement_polygons_25m.geojson"
+    )
     reclass_table: Path = DATA / "roughness" / "NLCD_CONUS_mapping.csv"
     container_sif: Path = ROOT / "sfincs-desktop.sif"
 
