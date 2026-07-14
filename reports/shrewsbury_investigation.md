@@ -2,26 +2,40 @@
 
 **Model run:** `snapwave_tuned` (our premier Hurricane Sandy setup, current build)
 **Date:** 2026-07-08, **revised 2026-07-10**, **resolved 2026-07-14**
-**Covered here:** Workstreams A, B, C, D, F/I (diagnosis) → **J and K (the answer)**
+**Covered here:** Workstreams A, B, C, D, F/I (diagnosis) → **J, K and L (the answer)**
 
 > ## ⚠️ Read this first (2026-07-14)
 >
-> **The under-fill was a mass leak. The model was draining the estuary.**
+> **The under-fill was not physics. The model had two holes in its plumbing.**
 >
-> The active-cell mask cut the Navesink River in half mid-channel and put a *free-outflow
-> boundary* — a drain — on a five-metre-deep tidal cross-section. **92.6% of all the water
-> entering the estuary was flowing straight out of the domain.** Sealing it (a mask edit;
-> no rebuild) **closes the mass balance and closes the under-fill**: the Shrewsbury
-> high-water-mark bias goes from **−0.42 m to +0.11 m** and the gauge from 2.22 m to 2.69 m
-> against an observed 2.94 m, *without moving the basins that never leaked.*
+> **1. It was draining the estuary.** `region.geojson` cut the Navesink River in half
+> mid-channel, so hydromt placed a *free-outflow boundary* — a drain — on a five-metre-deep
+> tidal cross-section. **92.6% of all the water entering the estuary flowed straight out of
+> the domain.** Sealing it takes the Shrewsbury high-water-mark bias from **−0.42 m to
+> +0.21 m** and the gauge from **2.22 m to 2.69 m** (observed 2.94), *without moving the
+> basins that never leaked.*
 >
-> **Everything below Workstream F was measured on the leaking model.** Those results are
-> not wrong so much as void: every experiment in the campaign hard-links the same broken
-> `sfincs.nc`, so the entire comparison matrix — Faber vs Galibier, the iteration sweeps,
-> the clamp study, wind, friction, the narrows-width test — was asking why a leaking bucket
-> would not fill. **Their null results are now *explained*, not *informative*, and none of
-> them should be cited as physics.** Sections A–F are kept below as the record of how we got
-> here. Jump to **Workstream J** for the discovery and **K** for the fix.
+> **2. Shark River Inlet was dammed shut.** The top-priority 2010 topobathy lidar failed to
+> penetrate the inlet and returned the **water surface** (+0.4 to +2.2 m) instead of the bed,
+> shadowing CUDEM's correct −3 m. Consequence: **the entire Shark River estuary never floods
+> in any run of this campaign — peak water level exactly +0.00 m — while the ocean 1.8 km away
+> reaches +2.9 m.** It is *not* a bridge; the dam's edge is the edge of the lidar tile.
+>
+> Both defects are **infrastructure — a region polygon and an elevation tier — not physics.**
+> That is precisely why two months of eliminating every *physical* lever (wind, friction, mesh
+> resolution, channel dredging, wave convergence) came back null. Nobody audits the plumbing.
+>
+> **So everything below Workstream F was measured on a broken domain.** Every experiment in the
+> campaign hard-links the same `sfincs.nc`, so the whole comparison matrix — Faber vs Galibier,
+> the iteration sweeps, the clamp study, wind, friction, the narrows-width test — was asking why
+> a leaking bucket would not fill. **Their null results are now *explained*, not *informative*,
+> and none of them should be cited as physics.** Sections A–F are kept below as the record of how
+> we got here.
+>
+> Both defects are now fixed **at the root** and the domain has been rebuilt (Workstream L):
+> zero free-outflow cells on water, Shark inlet open at −6.17 m, the Sea Bright revetment intact,
+> and only **+141 cells** changed. Jump to **J** (the discovery), **K** (the fix), **L** (the
+> rebuild).
 
 ---
 
@@ -606,7 +620,7 @@ predicted it would.
 
 ---
 
-## An unrelated defect this turned up: Shark River Inlet is dammed
+## A second defect this turned up: Shark River Inlet is dammed
 
 While re-deriving the tidal-range metric on the sealed model, Shark River behaved
 strangely: its "tidal range" *halved*. It turned out the metric there was never measuring a
@@ -617,14 +631,49 @@ this entire campaign, including the premier, its peak water level is exactly +0.
 initial condition — while the ocean 1.8 km away reaches +2.9 m.** It does not rise one
 centimetre during Hurricane Sandy.
 
-The cause is the same one we already fixed once, in a different place. Marching the bed
-elevation across the inlet, the seaward channel is real (−4 to −10 m) and the landward
-channel is real (−2.7 to −4.3 m), and **between them the lowest point anywhere on the
-cross-section is +0.57 m — above mean sea level.** Shark River Inlet carries the NJ Transit
-Coast Line bridge, the Route 71 bridge and Ocean Avenue, and they are baked into the lidar
-as a solid earthen dam. **It is the Rumson–Sea Bright bridge-as-dam, a second time.** The
-only mask-connected path from the Shark gauge to the sea climbs out of the channel and runs
-1.7 km *overland across Belmar's streets* at +3 to +5 m.
+Marching the bed across the inlet, the seaward channel is real (−4 to −10 m) and the
+landward channel is real (−2.7 to −4.3 m), and **between them the lowest point anywhere on
+the cross-section is +0.57 m — above mean sea level.**
+
+### It is not a bridge — and this matters
+
+The obvious reading, and our first one, was that this is the Rumson–Sea Bright bridge-as-dam
+a second time: Shark River Inlet carries the NJ Transit Coast Line bridge, the Route 71
+bridge and Ocean Avenue. **That was wrong, and checking it against the actual crossings is
+what found the real cause.** Ordered ocean → inland, none of them is inside the dam:
+
+| crossing | easting | inside the dam (583,875–584,175)? |
+|---|---|---|
+| Ocean Avenue (CR 18) | 584,259 | **no** — 84 m *east* of it |
+| Main Street (NJ 71) | 583,124 | no — 750 m *west* |
+| North Jersey Coast Line (rail) | 582,946 | no |
+| NJ 35 (River Road) | 582,885 | no |
+
+The dam sits in the ~750 m of **open, unbridged inlet channel** between Ocean Avenue and the
+Route 71 / rail / Route 35 cluster, where there is no structure at all.
+
+The real cause is the elevation data. Along the true channel:
+
+| | Shark inlet channel |
+|---|---|
+| eHydro soundings (ground truth) | **−4.6 to −10.8 m** |
+| `usace_nj_2010`, the **top-priority** tier | **+0.01 to +2.22 m** ← wins |
+| `cudem_nj`, the next tier | −2.2 to −4.5 m — correct, never consulted |
+
+**The 2010 USACE topobathy lidar failed to penetrate the inlet.** It is green (bathymetric)
+lidar, and in clear shallow water it returns the real bed — which is why it earns top billing.
+But in 5–10 m of turbid inlet water it did not reach the bottom and returned the **water
+surface** instead, ~0 to +2 m, indistinguishable from ordinary land. Ranked first, those
+returns shadowed CUDEM's correct −3 m bed and sealed the river shut.
+
+The giveaway is that **the dam's western edge, at x≈583,875, is exactly the edge of the lidar
+tile's coverage.** West of it the tile is NoData, the model falls through to CUDEM, and the
+channel is open. It is the footprint of a bad tile, not a causeway.
+
+That distinction is not pedantry. A bridge is a one-off you carve and forget. **A lidar tier
+that silently pretends water is land is a *class* of bug**, and it could be anywhere the
+survey met deep or turbid water — which is why the next thing we did was go looking for the
+others.
 
 ### Why nobody noticed for months
 
@@ -670,6 +719,88 @@ Shark.** We initially blamed it, and that was wrong.
 
 ---
 
+## Workstream L — fixing both defects at the root, and rebuilding once
+
+Workstream K sealed the leak with a *mask edit*. That treats the symptom. Asking **why** the
+mask had a free-outflow boundary in the middle of a river gives the real answer:
+
+**`region.geojson` was drawn too small.** Its southern lobe's western edge ran at x≈580,700,
+which **chops the Navesink in half mid-channel**. hydromt did nothing wrong — handed a domain
+whose edge cuts a 5 m-deep tidal river, it dutifully placed the standard free-outflow boundary
+on the cut face. The depth threshold was never involved: those cells are only ~−5 m, well
+inside `mask_zmin = −10`. All 137 dead-but-wet cells west of the cut lie **outside the region
+polygon**.
+
+So the region was extended west to **x = 577,000** — west of *both* tidal limits (the
+Navesink's water ends at x≈577,500, at Swimming River Dam; the Shark's at x≈580,000). The
+domain edge now lands on **dry land**, there is no deep cross-section for an outflow boundary
+to sit on, and **the leak cannot recur by construction.**
+
+### Hunting the other paved channels — a useful negative result
+
+Since a lidar tier that pretends water is land is a *class* of bug, we screened the whole
+domain for its signature: cells the model calls land (bed ≥ −0.5 m) where CUDEM says there is
+real water (< −2 m). That flagged **522 cells in 57 patches.**
+
+**The screen is not a verdict, and this is where it nearly went wrong.** Several patches sit on
+the **Sea Bright revetment**, where the 1 m lidar is *right* (it resolves the seawall) and 3 m
+CUDEM is *wrong* (it smears the wall into the water beside it). Carving those would have
+demolished a real structure the model currently gets right — and the revetment is a knife edge
+here, with the storm tide landing on it and 59–75% overtopping, so flattening it would have
+manufactured flooding and looked like a success.
+
+The arbiter had to be evidence, not inference: **did a boat actually sound water at that
+cell?** A first attempt asked only whether an eHydro survey's footprint intersected the patch,
+and it cheerfully proposed carving the revetment — because a *beach-nourishment* survey covers
+the shoreline there. Tightening it to "soundings within the cell itself, on at least half the
+patch" gives a clean answer:
+
+| | verdict |
+|---|---|
+| **Shark River Inlet** — 77% of cells sounded at **−5.67 m** | **CARVE** |
+| Sea Bright revetment patches — soundings read **+2.43, +2.37, +0.35, −0.04 m** | **LEAVE** — the seawall is real |
+| Sandy Hook Channel patches — only 6% of cells sounded | LEAVE — they sit on the spit |
+| Shrewsbury bank patches | LEAVE — bulkhead, and already carved where it is channel |
+
+**Shark is essentially the only genuine paving in the domain.** That negative result is worth
+as much as the positive one: it says the rebuild is a narrow, low-risk change rather than a
+re-bathymetry of the whole model.
+
+### The fix, and the guard
+
+`ehydro_nj.tif` (USACE survey `NJ_10_SRI_20150902_CS_4383_15`) now sits at the **top** of the
+elevation list — above `usace_nj_2010`, which is the entire point: only something ranked above
+the bad lidar can override it. It is **clipped to water only (z < −1 m)**, because it is a
+*carving* tier, not a DEM: a shore-protection survey that happens to cover the revetment
+reports +2.4 m there, which is clipped out, so **this file cannot flatten a structure even if
+we point it at one.**
+
+And two invariants now run at build time, before the expensive subgrid step:
+
+- **no free-outflow boundary on water deeper than 1 m** — *this one check would have caught the
+  leak on day one*;
+- **no active cell that is land where a survey sounded water** — the paved-channel screen, as a
+  regression test.
+
+Both **fail on the old mesh** (45 and 68 cells). They are load-bearing, not decoration.
+
+### The rebuilt domain
+
+| | old | rebuilt |
+|---|---|---|
+| free-outflow cells on open water | **45** | **0 — sealed** |
+| Shark inlet controlling sill | **+0.57 m (a dam)** | **−6.17 m (open)** |
+| Sea Bright revetment crest | +10.99 m | +10.68 m — **intact** |
+| total faces | 547,267 | 547,408 (**+141**) |
+
+A domain fix that quietly re-draws the whole model is not a domain fix. This one changes 141
+cells and nothing else. (Getting there required catching a third change riding along: the
+refinement config had 12.5 m polygons staged *after* the mesh was frozen, so any rebuild would
+have silently upgraded the estuary's resolution — **+124,000 faces and +33% runtime forever** —
+and confounded attribution. L4 was already measured as a null lever, so it is excluded.)
+
+---
+
 ## Where this leaves the investigation
 
 The estuary under-fill — the question this report was opened to answer — **is solved, and
@@ -684,17 +815,67 @@ excluded, and the reason nothing worked is that the defect was not on the list o
 anyone thought to check.** The boundary was never suspected because a boundary is
 infrastructure, not physics.
 
-What now needs redoing, honestly:
+**The through-line of both defects is the same.** A region polygon and an elevation tier are
+not physics; they are plumbing. Nobody audits the plumbing, because the plumbing is not where
+the science is. And yet a mask edit and a bathymetry tile did what two months of wind, friction,
+mesh-resolution and wave-convergence experiments could not — which is exactly why those
+experiments kept coming back null, and exactly why the nulls were the clue we misread.
 
-- **The premier must be re-established on the sealed domain.** Faber-vs-Galibier, the
-  iteration sweeps, the clamp study, wind, friction, the narrows-width test — every one of
-  those comparisons ran on a leaking bucket. Their null results are now *explained*, not
-  *informative*, and none of them can be cited as physics.
-- **Fix the Shark River Inlet dam**, the same way the Rumson–Sea Bright causeway was fixed:
-  carve the surveyed channel through it.
-- **Fix the HWM metric** so that a mark the model fails to flood counts as an error.
-- **Re-examine the +1.03 m Atlantic-oceanfront bias**, which the leak fix left standing (it
-  was +0.73 m before) and which is now the largest remaining error in the model.
+### The test, and the answer
 
-*Workstreams I, H and E — convergence, narrows width, infragravity — are superseded as
-written. They were all asking why a leaking bucket wouldn't fill.*
+The headline check needs **no storm peak and no high-water marks**: *does Shark River finally
+have a tide?*
+
+Both gauges died on 29 October, ~20 h before Sandy's peak, so there is no storm crest to compare
+against there. That turns out not to matter — because the dam's signature is precisely *the
+absence of a tide*, and the pre-storm record measures exactly that. It is the cleanest, most
+falsifiable test in the project, and the rebuilt model passes it:
+
+| | observed (USGS 01407770) | every run before | **sealed + carved** |
+|---|---|---|---|
+| Shark tidal range, per M2 cycle | **1.52 m** | *none — it never oscillated at all* | **1.331 m** |
+| Shark, fraction of time rising | **0.47** | **0.00** | **0.542** |
+| Shrewsbury tidal range | 1.23 m | 0.716 | **0.996** |
+
+**A basin that had never moved in the entire history of this project now tracks the observed
+tide cycle for cycle** (`reports/figures/gauge_verification.png`: the broken and mask-edit runs
+flatline and sit there; the sealed run oscillates with the observations, then rises to +2.8 m as
+the storm arrives). Shrewsbury holds, which says the region fix reaches the same place as the
+mask edit — by fixing the cause instead of the symptom.
+
+The flood extent improves too, and *honestly*:
+
+| | CSI | POD | FAR | miss |
+|---|---|---|---|---|
+| broken premier, **with** waves | 0.51 | 0.56 | 0.17 | 15.3 km² |
+| sealed + carved, **no** waves | **0.64** | **0.72** | **0.14** | **9.9 km²** |
+
+The blue "miss" areas in the back-bays have turned to hits. And note the **false-alarm rate went
+down** — this is not the model over-flooding to game a metric that rewards exactly that (MOTF's
+POD does). A run with the waves *switched off* now beats the old premier with them on.
+
+What remains to check on the wave arms: the locality test — **south-coast bias must stay pinned
+at −0.0553**. A domain fix is local. If the open coast moves, we changed something we did not
+mean to.
+
+### What is still open
+
+- **Re-establish the premier on the sealed domain.** Faber-vs-Galibier, the iteration sweeps,
+  the clamp study, the narrows-width test — every one of those comparisons ran on a leaking
+  bucket, so their nulls are *explained*, not *informative*. (One survivor: Galibier's missing
+  `snapwave_gammax` clamp is a fact about the **source code**, not the domain, so it stands —
+  and the Galibier arms carry the clamp restored, or we would be comparing Faber's physics
+  against Galibier's instability.)
+- **The +1.03 m Atlantic-oceanfront bias**, which the leak fix left standing (it was +0.73 m
+  before). This is now the **largest remaining error in the model**, and unlike everything above
+  it is a genuine physics question rather than a plumbing one.
+- **The open-boundary depth** (James's suggestion): sweep `mask_zmin` −10 / −15 / −20. Needs no
+  rebuild — the mesh reaches −69 m and every face already has subgrid tables.
+
+**Retired.** *D (wind)* stands as a null lever and is **not** being re-run: it measured +0.002 m,
+which is not "the leak ate it" but *no forcing response at all*, and a few km of fetch over a
+3.8e7 m³ prism gives wind no mechanism to act through whether the bucket holds or not.
+*C (the north boundary wall)* is answered — the boundary is a source, not a leak, and the NW
+corner was one of the three leaking cuts, now sealed by construction. *H (narrows width)* is
+moot: the estuary fills once sealed, so the conveyance hypothesis is dead. *E (infragravity)*
+remains genuinely open.

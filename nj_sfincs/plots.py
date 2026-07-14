@@ -563,3 +563,192 @@ def plot_engine_difference(run_a, run_b, root=None, window=SHREWSBURY_WINDOW,
     ax.set_title(f"{lb}  −  {la}\nred = deeper in {lb}   ·   blue = deeper in {la}",
                  fontsize=11)
     return fig, ax
+
+
+# ── Sealed-domain verification (2026-07-14, Workstreams K/L) ──────────────────
+# The two figures that matter for the rebuilt domain. Both live here rather than in
+# the notebook so the notebook stays thin (and so they survive an nbstripout wipe).
+
+GAUGES = {
+    "shrewsbury": dict(sid=1407600, lon=-73.97470, lat=40.36560,
+                       label="Shrewsbury R. (USGS 01407600)"),
+    "shark": dict(sid=1407770, lon=-74.02610, lat=40.18560,
+                  label="Shark R. at Belmar (USGS 01407770)"),
+}
+# Post-event SURVEYED crest at Shrewsbury. There is no hydrograph for it — the gauge
+# died in the storm — so it is a single point, not a curve. See validate.SHREWSBURY_CREST.
+SHREWSBURY_CREST_M = 2.935
+
+
+def plot_gauge_verification(runs, root=None, data_dir=DATA, hours=None):
+    """Observed vs modelled water level at the two interior gauges.
+
+    WHY THIS FIGURE EXISTS, AND WHY THE SHORT RECORD IS NOT A PROBLEM.
+
+    Both USGS gauges DIED at 2012-10-29 03:54 — roughly 20 h before Sandy's peak — so
+    neither has a storm crest, and the Shrewsbury "2.935 m" is a post-event SURVEYED
+    high-water mark, not a measurement (drawn here as a single star, not a line).
+
+    That sounds like a weak validation, and for the SURGE it is. But it is exactly the
+    right instrument for the two bugs this project just fixed, because what the record
+    *does* contain is a clean **pre-storm tide** — and both defects destroy the tide:
+
+      * the Navesink leak drained the estuary from a flat start, so the modelled level
+        fell monotonically instead of oscillating;
+      * the Shark River Inlet dam cut that basin off from the ocean entirely, so it
+        NEVER oscillated at all (fraction of time rising = 0.00, against 0.47 observed).
+
+    So read the left half of these panels, not the right. If the sealed model tracks the
+    observed tide at Shark, the inlet is genuinely open — and that conclusion needs no
+    storm peak and no high-water marks at all.
+
+    ``runs``: {label: experiment_dir_name}, or a list of names.
+    """
+    import matplotlib.pyplot as plt
+    import pandas as pd
+
+    from .validate import _tidal_signal, _wet_channel_cells
+
+    root = Path(root) if root else ROOT / "experiments"
+    if not isinstance(runs, dict):
+        runs = {r: r for r in runs}
+
+    obs = xr.open_dataset(str(Path(data_dir) / "gtsm" / "usgs_sandy_tidal_nj.nc"))
+    ot = pd.to_datetime(obs["time"].values)
+
+    fig, axes = plt.subplots(len(GAUGES), 1, figsize=(11, 4.2 * len(GAUGES)), sharex=True)
+    axes = np.atleast_1d(axes)
+
+    for ax, (key, g) in zip(axes, GAUGES.items()):
+        ow = obs["waterlevel"].sel(stations=g["sid"]).values
+        ax.plot(ot, ow, color="k", lw=2.2, label="observed", zorder=5)
+        # mark where the instrument dies — everything right of this is model-only
+        t_die = ot[np.isfinite(ow)][-1]
+        ax.axvline(t_die, color="k", ls=":", lw=1.2)
+        ax.axvspan(t_die, ot[-1] + pd.Timedelta("36h"), color="0.92", zorder=0)
+        ax.text(t_die, ax.get_ylim()[1], "  gauge dies", va="top", ha="left",
+                fontsize=8, color="0.35")
+
+        o_sig = _tidal_signal(ow)
+        for i, (label, name) in enumerate(runs.items()):
+            d = root / name
+            if not (d / "sfincs_map.nc").exists():
+                continue
+            mp = xr.open_dataset(d / "sfincs_map.nc")
+            cells = _wet_channel_cells(d, g["lon"], g["lat"])
+            if cells is None:
+                continue
+            idx = cells[0]
+            zs = mp["zs"].isel(nmesh2d_face=idx).values
+            full = np.isfinite(zs).all(axis=0)
+            if not full.any():
+                continue
+            series = np.median(zs[:, full], axis=1)
+            mt = pd.to_datetime(mp["time"].values)
+            # the tide statistic over the same pre-storm window the gauge covers
+            pre = mt <= t_die
+            sig = _tidal_signal(series[pre]) if pre.sum() > 3 else dict(frac_rising=np.nan)
+            ax.plot(mt, series, lw=1.5, alpha=0.9,
+                    label=f"{label}   (rises {sig['frac_rising']:.2f} of the time)")
+
+        if key == "shrewsbury":
+            ax.plot([ot[-1] + pd.Timedelta("21h")], [SHREWSBURY_CREST_M], marker="*",
+                    ms=16, color="crimson", zorder=6, ls="none",
+                    label=f"surveyed crest {SHREWSBURY_CREST_M:.2f} m (no hydrograph)")
+
+        ax.set_title(f"{g['label']}   —   observed tide rises "
+                     f"{o_sig['frac_rising']:.2f} of the time", fontsize=10)
+        ax.set_ylabel("water level [m NAVD88]")
+        ax.grid(alpha=0.3)
+        ax.legend(fontsize=8, loc="upper left", ncol=1)
+
+    axes[-1].set_xlabel("2012")
+    fig.suptitle("Gauge verification — read the PRE-STORM TIDE (left of the dotted line).\n"
+                 "A tide floods and ebbs; a drained or dammed basin only ebbs.",
+                 fontsize=11)
+    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    return fig, axes
+
+
+def plot_motf_panels(runs, root=None, data_dir=DATA, ncol=2):
+    """Modeled flood vs FEMA MOTF — hit / miss / false-alarm — for several runs side by side.
+
+    ⚠️ READ THE CSI, NOT THE POD. FEMA MOTF is a HWM/sensor-interpolated *bathtub* surface
+    that shares provenance with our own high-water marks (a flat 3.4 m fill reproduces it at
+    IoU 0.906), so it is an extent CONSISTENCY check, not an independent observation. And its
+    POD structurally REWARDS OVER-FLOODING: flood everything and you score a perfect POD. It
+    is the mirror image of the HWM-bias flaw, which rewards under-flooding. Lead with the
+    gauge + HWM + tidal-range trio; use this to see WHERE the extent differs, not to rank runs.
+
+    ``runs``: {label: experiment_dir_name}, or a list of names.
+    """
+    import matplotlib.pyplot as plt
+    import rasterio
+
+    from .validate import DEPTH_MIN, load_floodmap
+
+    root = Path(root) if root else ROOT / "experiments"
+    if not isinstance(runs, dict):
+        runs = {r: r for r in runs}
+    runs = {k: v for k, v in runs.items() if (root / v / "sfincs_map.nc").exists()}
+    if not runs:
+        raise SystemExit("no finished runs among those given")
+
+    with rasterio.open(str(Path(data_dir) / "validation" / "sandy_motf_extent.tif")) as r:
+        motf, mtf, m_nd = r.read(1), r.transform, r.nodata
+    mh, mw = motf.shape
+    motf_wet = motf == 1
+
+    n = len(runs)
+    ncol = min(ncol, n)
+    nrow = int(np.ceil(n / ncol))
+    fig, axes = plt.subplots(nrow, ncol, figsize=(5.4 * ncol, 8.6 * nrow), squeeze=False)
+    cmap = ListedColormap(
+        [(1, 1, 1, 0), (0.2, 0.6, 0.3, 1), (0.2, 0.4, 0.85, 1), (0.85, 0.2, 0.2, 1)]
+    )
+    ext = [mtf.c, mtf.c + mw * mtf.a, mtf.f + mh * mtf.e, mtf.f]
+
+    for ax, (label, name) in zip(axes.ravel(), runs.items()):
+        _, hmax, dep = load_floodmap(root / name)
+        mod_t = dep.rio.transform()
+        Xc = mtf.c + (np.arange(mw) + 0.5) * mtf.a
+        Yc = mtf.f + (np.arange(mh) + 0.5) * mtf.e
+        mc = np.clip(((Xc - mod_t.c) / mod_t.a).astype(int), 0, dep.shape[-1] - 1)
+        mr = np.clip(((Yc - mod_t.f) / mod_t.e).astype(int), 0, dep.shape[-2] - 1)
+        rr, cc = np.meshgrid(mr, mc, indexing="ij")
+        _2d = lambda a: a[0] if a.ndim == 3 else a
+        dep_at, h_at = _2d(dep.values)[rr, cc], _2d(hmax.values)[rr, cc]
+
+        mod_wet = (h_at >= DEPTH_MIN) & np.isfinite(h_at)
+        land_in = (motf != m_nd) & (dep_at > 0.0)
+        hits = motf_wet & mod_wet & land_in
+        miss = motf_wet & ~mod_wet & land_in
+        fa = ~motf_wet & mod_wet & land_in
+        nh, nm_, nf = int(hits.sum()), int(miss.sum()), int(fa.sum())
+        PIX = mtf.a * abs(mtf.e) / 1e6
+        csi = nh / (nh + nm_ + nf) if (nh + nm_ + nf) else np.nan
+        pod = nh / (nh + nm_) if (nh + nm_) else 0.0
+        far = nf / (nh + nf) if (nh + nf) else 0.0
+
+        cat = np.zeros_like(motf, dtype="uint8")
+        cat[hits], cat[miss], cat[fa] = 1, 2, 3
+        mod_ext = [mod_t.c, mod_t.c + dep.shape[-1] * mod_t.a,
+                   mod_t.f + dep.shape[-2] * mod_t.e, mod_t.f]
+        ax.imshow(_2d(dep.values), extent=mod_ext, cmap="Greys", vmin=-5, vmax=20,
+                  alpha=0.45, origin="upper")
+        ax.imshow(cat, cmap=cmap, vmin=0, vmax=3, extent=ext, origin="upper",
+                  interpolation="nearest")
+        ax.set_aspect("equal")
+        ax.set_xlim(ext[0], ext[1])
+        ax.set_ylim(ext[2], ext[3])
+        ax.set_title(f"{label}\nCSI={csi:.2f}  POD={pod:.2f}  FAR={far:.2f}", fontsize=10)
+        ax.legend(handles=[
+            Patch(color=cmap(1), label=f"hit ({nh * PIX:.1f} km²)"),
+            Patch(color=cmap(2), label=f"miss ({nm_ * PIX:.1f} km²)"),
+            Patch(color=cmap(3), label=f"false alarm ({nf * PIX:.1f} km²)"),
+        ], loc="upper right", fontsize=7)
+
+    for ax in axes.ravel()[len(runs):]:
+        ax.axis("off")
+    fig.tight_layout()
+    return fig, axes
