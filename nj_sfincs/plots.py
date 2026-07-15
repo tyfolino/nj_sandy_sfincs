@@ -232,6 +232,97 @@ def plot_wave_field(mod):
     return fig, ax
 
 
+def plot_wave_field_panels(runs, root=None, margin=2500.0, ncol=None, panel_h=6.5):
+    """SnapWave Hm0 at peak for several runs side by side (the before/after wave field).
+
+    ``plot_basemap`` builds its own figure and takes no ``ax=``, so it cannot compose
+    side-by-side panels. Here we render the quadtree hm0 field directly as a
+    ``PolyCollection`` over a grey land/sea backdrop — which also lets the panels share
+    one colour scale and one window, and makes the figure land­scape (two coastal maps
+    abreast) instead of a single tall sliver.
+
+    ``runs``: {label: experiment_dir_name}, or a list of names. Runs without a wave
+    field (waves off) are skipped.
+    """
+    import matplotlib.pyplot as plt
+    from matplotlib.collections import PolyCollection
+
+    root = Path(root) if root else ROOT / "experiments"
+    if not isinstance(runs, dict):
+        runs = {r: r for r in runs}
+    runs = {k: v for k, v in runs.items() if (root / v / "sfincs_map.nc").exists()}
+
+    # First pass: read each field and grow a shared window (the wet faces) + colour scale.
+    data = {}
+    xmin = ymin = np.inf
+    xmax = ymax = -np.inf
+    vmax = 0.0
+    for label, name in runs.items():
+        mp = xr.open_dataset(root / name / "sfincs_map.nc")
+        if "hm0" not in mp:
+            mp.close()
+            continue
+        nx, ny = mp["mesh2d_node_x"].values, mp["mesh2d_node_y"].values
+        fn = mp["mesh2d_face_nodes"].values.astype(np.int64) - 1   # 1-based -> 0-based
+        hm0 = mp["hm0"]
+        face = [d for d in hm0.dims if d != "time"][0]
+        # Peak of the domain-MEAN wave height, not the domain max: a single offshore
+        # boundary cell can spike hm0 at t=0, which otherwise picks the run's start
+        # instead of the storm peak (and picks a different moment for each run).
+        mean_series = hm0.where(hm0 > 0.1).mean(face).values
+        tpk = int(np.nanargmax(mean_series))
+        h = hm0.isel(time=tpk).values
+        t = str(hm0["time"].isel(time=tpk).values)[:16]
+        vx, vy = nx[fn], ny[fn]                                    # (nface, 4)
+        verts = np.stack([vx, vy], axis=-1)                        # (nface, 4, 2)
+        wet = h > 0.1
+        if wet.any():
+            xmin, xmax = min(xmin, vx[wet].min()), max(xmax, vx[wet].max())
+            ymin, ymax = min(ymin, vy[wet].min()), max(ymax, vy[wet].max())
+            vmax = max(vmax, float(np.nanpercentile(h[wet], 99)))
+        zb = mp["zb"].values if "zb" in mp else None
+        data[label] = dict(verts=verts, h=h, zb=zb, wet=wet, t=t,
+                           cx=vx.mean(1), cy=vy.mean(1))
+        mp.close()
+    if not data:
+        raise SystemExit("no run has a SnapWave hm0 field")
+
+    xmin -= margin; xmax += margin; ymin -= margin; ymax += margin
+    aspect = (xmax - xmin) / (ymax - ymin)
+
+    n = len(data)
+    ncol = ncol or n
+    nrow = int(np.ceil(n / ncol))
+    fig, axes = plt.subplots(nrow, ncol,
+                             figsize=(panel_h * aspect * ncol + 1.6, panel_h * nrow),
+                             squeeze=False, constrained_layout=True)
+
+    pc = None
+    for ax, (label, d) in zip(axes.ravel(), data.items()):
+        insel = ((d["cx"] >= xmin) & (d["cx"] <= xmax) &
+                 (d["cy"] >= ymin) & (d["cy"] <= ymax))
+        if d["zb"] is not None:                                    # land/sea context
+            bg = PolyCollection(d["verts"][insel], cmap="Greys_r", alpha=0.5,
+                                edgecolors="none")
+            bg.set_array(d["zb"][insel]); bg.set_clim(-15, 25)
+            ax.add_collection(bg)
+        m = insel & d["wet"]
+        pc = PolyCollection(d["verts"][m], cmap="viridis", edgecolors="none")
+        pc.set_array(d["h"][m]); pc.set_clim(0, vmax or 1.0)
+        ax.add_collection(pc)
+        ax.set_xlim(xmin, xmax); ax.set_ylim(ymin, ymax)
+        ax.set_aspect("equal")
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.set_title(f"{label}\nHm0 @ peak ({d['t']})", fontsize=10)
+
+    for ax in axes.ravel()[n:]:
+        ax.axis("off")
+    if pc is not None:
+        fig.colorbar(pc, ax=axes, shrink=0.6).set_label("SnapWave Hm0 [m]")
+    fig.suptitle("SnapWave Hm0 at peak — look for a lee behind Sandy Hook", fontsize=12)
+    return fig, axes
+
+
 def plot_floodmap(mod, da_hmax):
     """Cell 70 — maximum water depth over satellite."""
     fig, ax = mod.plot_basemap(
@@ -462,8 +553,9 @@ def plot_engine_panels(runs, root=None, window=SHREWSBURY_WINDOW, vmax=3.0,
                        hwm=True, ncol=None, panel_h=7.0, data_dir=DATA):
     """Max flood depth for several runs side by side, zoomed on the estuary.
 
-    ``runs`` maps experiment dir name -> panel title. Reads the cached tifs, so it
-    is seconds rather than the minutes a re-downscale costs.
+    ``runs``: {label: experiment_dir_name} (same orientation as the other panel
+    helpers). Reads the cached tifs, so it is seconds rather than the minutes a
+    re-downscale costs.
 
     HWMs are drawn as LOCATION markers only, deliberately uncoloured: ``elev_m`` is
     a water-surface elevation (NAVD88) while the raster is a depth, so putting them
@@ -492,7 +584,7 @@ def plot_engine_panels(runs, root=None, window=SHREWSBURY_WINDOW, vmax=3.0,
             pts = pts[pts["quality"].astype(float) <= 2]
 
     im = None
-    for ax, (run, title) in zip(axes.ravel(), runs.items()):
+    for ax, (title, run) in zip(axes.ravel(), runs.items()):
         hmax, dep = load_cached_floodmap(root / run, window=window)
         if hmax is None:
             ax.text(0.5, 0.5, f"{run}\n\nnot downscaled yet", ha="center",
@@ -751,4 +843,71 @@ def plot_motf_panels(runs, root=None, data_dir=DATA, ncol=2):
     for ax in axes.ravel()[len(runs):]:
         ax.axis("off")
     fig.tight_layout()
+    return fig, axes
+
+
+def plot_hwm_residual_panels(runs, root=None, data_dir=DATA, ncol=2):
+    """USGS high-water-mark residuals (model − obs) for several runs side by side.
+
+    The before/after companion to ``plot_hwm_residual_map``: red = model too high,
+    blue = model too low, black ✕ = model dry where a mark says it should be wet.
+    Reads each run's downscaled flood map, so a run that has not been scored yet is
+    skipped rather than erroring.
+
+    ``runs``: {label: experiment_dir_name}, or a list of names.
+    """
+    import matplotlib.pyplot as plt
+
+    from .validate import load_floodmap
+
+    root = Path(root) if root else ROOT / "experiments"
+    if not isinstance(runs, dict):
+        runs = {r: r for r in runs}
+    runs = {k: v for k, v in runs.items() if (root / v / "sfincs_map.nc").exists()}
+    if not runs:
+        raise SystemExit("no finished runs among those given")
+
+    # Crop to the marks themselves, not the whole de-rotated grid (most of which is
+    # inactive ocean / the Raritan lobe). One pass to fix the window so both panels
+    # share it, then size the figure to that window's aspect.
+    hwm0 = gpd.read_file(str(Path(data_dir) / "validation" / "sandy_hwms.geojson"))
+    margin = 2000.0
+    xs, ys = hwm0.to_crs("EPSG:32618").geometry.x, hwm0.to_crs("EPSG:32618").geometry.y
+    win = (xs.min() - margin, xs.max() + margin, ys.min() - margin, ys.max() + margin)
+    aspect = (win[1] - win[0]) / (win[3] - win[2])
+
+    n = len(runs)
+    ncol = min(ncol, n)
+    nrow = int(np.ceil(n / ncol))
+    fig, axes = plt.subplots(nrow, ncol,
+                             figsize=(6.5 * aspect * ncol + 1.6, 6.5 * nrow),
+                             squeeze=False, constrained_layout=True)
+
+    sc = None
+    for ax, (label, name) in zip(axes.ravel(), runs.items()):
+        _, hmax, dep = load_floodmap(root / name)
+        hwm, obs, mod_wse, resid, wet, qual = _sample_hwm(hmax, dep, data_dir)
+        ext = _extent(dep)
+        _2d = lambda a: a[0] if a.ndim == 3 else a
+        ax.imshow(_2d(dep.values), extent=ext, origin="upper", cmap="Greys_r",
+                  vmin=-15, vmax=25, alpha=0.55, interpolation="nearest")
+        hx, hy = hwm.geometry.x.values, hwm.geometry.y.values
+        sc = ax.scatter(hx[wet], hy[wet], c=resid[wet], cmap="RdBu_r", vmin=-1.5,
+                        vmax=1.5, s=55, edgecolor="k", lw=0.5, zorder=5)
+        ax.scatter(hx[~wet], hy[~wet], marker="x", color="k", s=55, lw=1.4, zorder=6,
+                   label=f"model dry ({int((~wet).sum())})")
+        med = np.nanmedian(resid[wet]) if wet.any() else np.nan
+        ax.set_title(f"{label}\nmedian {med:+.2f} m · {int((~wet).sum())} dry",
+                     fontsize=9)
+        ax.set_xlim(win[0], win[1]); ax.set_ylim(win[2], win[3])
+        ax.set_aspect("equal")
+        ax.set_xticks([]); ax.set_yticks([])
+        ax.legend(loc="upper right", fontsize=8)
+
+    for ax in axes.ravel()[n:]:
+        ax.axis("off")
+    if sc is not None:
+        cb = fig.colorbar(sc, ax=axes, shrink=0.55)
+        cb.set_label("HWM residual: model − obs [m]")
+    fig.suptitle("Sandy HWM residuals — red = model high, blue = low", fontsize=11)
     return fig, axes

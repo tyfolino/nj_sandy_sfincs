@@ -35,7 +35,29 @@
 > Both defects are now fixed **at the root** and the domain has been rebuilt (Workstream L):
 > zero free-outflow cells on water, Shark inlet open at −6.17 m, the Sea Bright revetment intact,
 > and only **+141 cells** changed. Jump to **J** (the discovery), **K** (the fix), **L** (the
-> rebuild).
+> rebuild), **O** (the premier chosen on the sealed domain).
+
+> ## ✅ Resolution (2026-07-15, Workstream O) — the premier, re-chosen on the sealed domain
+>
+> The sealed 2×2 (Faber/Galibier × waves/nowaves) was run and scored on the rebuilt domain.
+> **`sealed_faber_waves` is the adopted premier**, and the leak/dam fixes hold under the full
+> storm, not just the tide-only check:
+>
+> * **Shark River has a tide at last.** All four sealed runs oscillate — frac-rising **0.542**
+>   (obs 0.47), range **1.30–1.35 m** (obs 1.52) — where every pre-rebuild run was dead flat
+>   (0.00, never oscillated).
+> * **Shrewsbury recovered.** `sealed_faber_waves` puts the gauge at **2.84 m** vs the surveyed
+>   **2.94 m** crest — err **−0.10 m**, the best in the campaign (broken premier was 2.22 / −0.71).
+> * **Faber over Galibier.** The two are bit-identical with waves off; with waves **Galibier
+>   overshoots hard** (gauge +0.57 m, HWM bias +0.97, RMSE 1.14) even with `snapwave_gammax`
+>   restored. Galibier is **unofficially retired**; Faber is the engine going forward.
+> * **MOTF:** CSI **0.51 → 0.64**, FAR **down** 0.17 → 0.14.
+> * ⚠️ **Locality caveat.** The open coast that never broke drifted ~0.1 m on the rebuild
+>   (south_coast −0.055 → +0.048; atlantic_oceanfront swung further), so the fix is **not
+>   *purely* local**. Small next to the gains, but it is the one open thread from this test.
+>
+> Table: `reports/sealed_premier.csv` (from `scripts/analyze_sealed.py`). Figures: the viz
+> notebook's before/after Results section.
 
 ---
 
