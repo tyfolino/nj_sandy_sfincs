@@ -116,55 +116,16 @@ def _check_domain_invariants(sf, mask, zb) -> None:
           "(no outflow BC on water; no paved-over surveyed channel)")
 
 
-def build_static(base: BaseConfig, template_dir: Path, skip_subgrid: bool = False) -> None:
-    """Phase 1 — build grid/elevation/mask/subgrid and write to ``template_dir``.
+def apply_mask_and_boundary(base: BaseConfig, sf: SfincsModel) -> None:
+    """Build the active mask + water-level/outflow boundaries and enforce the invariants.
 
-    Forcing-independent, so it runs once; ``add_forcing`` reopens from disk.
+    Extracted verbatim from ``build_static`` (sections 4-5) so it has ONE source of
+    truth. ``build_static`` calls it on a freshly-built grid; the boundary-depth sweep
+    (``scripts/setup_boundary_depth.py``) calls it on a COPY of the frozen mesh to
+    re-derive the mask at a different ``mask_zmin`` — a pure mask/boundary change that
+    reuses the frozen subgrid tables (every face already has them), so no rebuild.
+    Depends only on ``sf`` and ``base`` (``base.mask_zmin`` and ``base.region``).
     """
-    template_dir = Path(template_dir)
-    template_dir.mkdir(parents=True, exist_ok=True)
-
-    # Reproducibility short-circuit: the quadtree grid+subgrid build is
-    # environment-sensitive — two builds of identical code/config can differ by
-    # ~18 cells, which shifts CSI ~0.04 (notebook 0.54 vs harness 0.50; see
-    # project memory). If a frozen static mesh is provided, copy it verbatim so
-    # every run — harness AND notebook — shares ONE identical grid. Freeze once
-    # with scripts/freeze_mesh.py; point BaseConfig.frozen_mesh at the result.
-    if base.frozen_mesh is not None:
-        frozen = Path(base.frozen_mesh)
-        if not (frozen / "sfincs.inp").exists():
-            raise FileNotFoundError(
-                f"BaseConfig.frozen_mesh={frozen} has no sfincs.inp — "
-                f"build it first with scripts/freeze_mesh.py"
-            )
-        print(f"[build_static] reusing frozen mesh from {frozen} (no rebuild)")
-        shutil.copytree(frozen, template_dir, dirs_exist_ok=True)
-        return
-
-    log.initialize_logging()
-    log.set_log_level(log_level=30)  # warnings + errors only (quiet build)
-    log.to_file(template_dir / "hydromt_sfincs.log", append=False)
-
-    sf = SfincsModel(
-        data_libs=base.data_libs, root=str(template_dir), mode="w+", write_gis=True
-    )
-
-    # 2. Quadtree grid --------------------------------------------------------
-    refinement_gdf = gpd.read_file(base.refinement)
-    sf.quadtree_grid.create_from_region(
-        region={"geom": str(base.region)},
-        res=base.base_res,
-        rotated=base.rotated,
-        crs=base.crs,
-        refinement_polygons=refinement_gdf,
-        elevation_list=base.elevation(),
-    )
-
-    # 3. Elevation ------------------------------------------------------------
-    sf.quadtree_elevation.create(
-        elevation_list=base.elevation(), buffer_cells=0, nrmax=2000
-    )
-
     # 4. Active mask ----------------------------------------------------------
     bay_include = gpd.GeoDataFrame(
         geometry=[shapely.box(*BAY_INCLUDE_BOX_LL)], crs=4326
@@ -221,13 +182,66 @@ def build_static(base: BaseConfig, template_dir: Path, skip_subgrid: bool = Fals
     zb = sf.quadtree_grid.data["z"].values
     wet_outflow = (mask == 3) & (zb < OUTFLOW_MAX_DEPTH)
     if wet_outflow.any():
-        print(f"[build_static] sealing {int(wet_outflow.sum())} free-outflow cells that sit on "
+        print(f"[mask] sealing {int(wet_outflow.sum())} free-outflow cells that sit on "
               f"water (deepest {zb[wet_outflow].min():+.2f} m) — an outflow BC on open water "
               f"is a drain, not a boundary")
         mask[wet_outflow] = 1
     sf.quadtree_grid.data["mask"] = sf.quadtree_grid.data["mask"].copy(data=mask)
 
     _check_domain_invariants(sf, mask, zb)
+
+
+def build_static(base: BaseConfig, template_dir: Path, skip_subgrid: bool = False) -> None:
+    """Phase 1 — build grid/elevation/mask/subgrid and write to ``template_dir``.
+
+    Forcing-independent, so it runs once; ``add_forcing`` reopens from disk.
+    """
+    template_dir = Path(template_dir)
+    template_dir.mkdir(parents=True, exist_ok=True)
+
+    # Reproducibility short-circuit: the quadtree grid+subgrid build is
+    # environment-sensitive — two builds of identical code/config can differ by
+    # ~18 cells, which shifts CSI ~0.04 (notebook 0.54 vs harness 0.50; see
+    # project memory). If a frozen static mesh is provided, copy it verbatim so
+    # every run — harness AND notebook — shares ONE identical grid. Freeze once
+    # with scripts/freeze_mesh.py; point BaseConfig.frozen_mesh at the result.
+    if base.frozen_mesh is not None:
+        frozen = Path(base.frozen_mesh)
+        if not (frozen / "sfincs.inp").exists():
+            raise FileNotFoundError(
+                f"BaseConfig.frozen_mesh={frozen} has no sfincs.inp — "
+                f"build it first with scripts/freeze_mesh.py"
+            )
+        print(f"[build_static] reusing frozen mesh from {frozen} (no rebuild)")
+        shutil.copytree(frozen, template_dir, dirs_exist_ok=True)
+        return
+
+    log.initialize_logging()
+    log.set_log_level(log_level=30)  # warnings + errors only (quiet build)
+    log.to_file(template_dir / "hydromt_sfincs.log", append=False)
+
+    sf = SfincsModel(
+        data_libs=base.data_libs, root=str(template_dir), mode="w+", write_gis=True
+    )
+
+    # 2. Quadtree grid --------------------------------------------------------
+    refinement_gdf = gpd.read_file(base.refinement)
+    sf.quadtree_grid.create_from_region(
+        region={"geom": str(base.region)},
+        res=base.base_res,
+        rotated=base.rotated,
+        crs=base.crs,
+        refinement_polygons=refinement_gdf,
+        elevation_list=base.elevation(),
+    )
+
+    # 3. Elevation ------------------------------------------------------------
+    sf.quadtree_elevation.create(
+        elevation_list=base.elevation(), buffer_cells=0, nrmax=2000
+    )
+
+    # 4-5. Active mask + boundary cells --------------------------------------
+    apply_mask_and_boundary(base, sf)
 
     # 6. Observation points (validation gauges only) --------------------------
     val_gauges = gpd.GeoDataFrame(

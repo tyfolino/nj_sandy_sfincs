@@ -15,6 +15,7 @@ the whole row — the runner still gets a usable CSV line.
 
 from __future__ import annotations
 
+import os
 from pathlib import Path
 
 import geopandas as gpd
@@ -233,9 +234,21 @@ def load_floodmap(model_dir: Path):
     da_zsmax = mod.output.data["zsmax"].max(dim="timemax")
     depfile = str(model_dir / "subgrid" / "dep_subgrid_lev3.tif")
     floodmap_fn = str(model_dir / "floodmap_hmax_lev3.tif")
+
+    # Downscale to a temp file and os.replace() into position, so the cache is either
+    # absent or COMPLETE -- never a stub. This takes minutes; if it is interrupted
+    # (Ctrl-C, kill, quota) a direct write leaves a short raster that reads back with
+    # no error and scores the model bone DRY: CSI 0.00, every HWM "dry". That is a
+    # broken file wearing the costume of a dramatic physics result, and it cost us an
+    # afternoon on 2026-07-16. os.replace is atomic within a filesystem.
+    #
+    # The temp name MUST keep the .tif extension: downscale_floodmap calls
+    # build_overviews, which asserts the extension and dies on a .tmp suffix.
+    tmp_fn = str(model_dir / ".floodmap_hmax_lev3.partial.tif")
     utils.downscale_floodmap(
-        zsmax=da_zsmax, dep=depfile, hmin=0.05, floodmap_fn=floodmap_fn, nrmax=1000
+        zsmax=da_zsmax, dep=depfile, hmin=0.05, floodmap_fn=tmp_fn, nrmax=1000
     )
+    os.replace(tmp_fn, floodmap_fn)
     da_hmax = rioxarray.open_rasterio(floodmap_fn, masked=True).squeeze(drop=True)
     da_dep = rioxarray.open_rasterio(depfile, masked=True).squeeze(drop=True)
     da_hmax = da_hmax.rio.reproject(da_hmax.rio.crs)   # de-rotate to north-up

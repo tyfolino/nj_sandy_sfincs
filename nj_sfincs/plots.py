@@ -521,6 +521,20 @@ def load_cached_floodmap(run_dir, window=SHREWSBURY_WINDOW):
 
     Returns ``(da_hmax, da_dep)``, or ``(None, None)`` if the run has not been
     downscaled yet — a missing tif is an expected state, not an error.
+
+    A tif that EXISTS is trusted here, which is only safe because ``load_floodmap``
+    writes the cache ATOMICALLY (temp file + os.replace). Before it did, a write
+    interrupted mid-flight (Ctrl-C, kill, quota) left a short raster that read back
+    without error and scored the model bone DRY — CSI 0.00, every HWM "dry": a
+    spectacular physics result that was really a broken file. It bit us on
+    2026-07-16 (sealed_bdepth_m20 scored 0.72 from a complete raster, then 0.00
+    from a 4 MB stub of the same run). Do not weaken that write.
+
+    Do NOT try to catch stubs by file size here. A healthy floodmap is only
+    0.11-0.16x its dep raster — it is sparse, mostly nodata off the flooded area —
+    and no size band separates "sparse because the coast barely flooded" from
+    "sparse because the write died". Atomicity at the write is the check; there is
+    no reliable one at the read.
     """
     run_dir = Path(run_dir)
     tif = run_dir / "floodmap_hmax_lev3.tif"

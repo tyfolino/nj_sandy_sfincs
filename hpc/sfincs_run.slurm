@@ -10,6 +10,11 @@
 #SBATCH -J sfincs
 #SBATCH -o logs/sfincs_%j.out
 #SBATCH -e logs/sfincs_%j.out
+# Heat-wave node losses preempt jobs. --requeue lets SLURM put a preempted/node-failed job
+# back in the queue automatically instead of killing it. SFINCS re-runs the whole solve from
+# scratch on requeue (it overwrites its own output), so a restart is idempotent — no checkpoint
+# state to corrupt. SLURM_RESTART_COUNT tells us how many times this happened.
+#SBATCH --requeue
 
 set -euo pipefail
 
@@ -25,6 +30,9 @@ export OMP_NUM_THREADS="${SLURM_CPUS_PER_TASK:-1}"
 
 echo "host=$(hostname)  job=${SLURM_JOB_ID:-none}  threads=$OMP_NUM_THREADS"
 echo "model=$MODEL  sif=$SIF"
+if [ "${SLURM_RESTART_COUNT:-0}" -gt 0 ]; then
+    echo "NOTE: this job was requeued (restart #${SLURM_RESTART_COUNT}) — re-running the solve from scratch."
+fi
 
 # Singularity runs as the calling user, so no root-owned-output cleanup is needed
 # (unlike the old Docker workflow).

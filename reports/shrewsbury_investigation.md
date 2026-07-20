@@ -1,8 +1,9 @@
 # Why does the Shrewsbury River under-fill? — A re-investigation
 
 **Model run:** `snapwave_tuned` (our premier Hurricane Sandy setup, current build)
-**Date:** 2026-07-08, **revised 2026-07-10**, **resolved 2026-07-14**
-**Covered here:** Workstreams A, B, C, D, F/I (diagnosis) → **J, K and L (the answer)**
+**Date:** 2026-07-08, **revised 2026-07-10**, **resolved 2026-07-14**, **extended 2026-07-16**
+**Covered here:** Workstreams A, B, C, D, F/I (diagnosis) → **J, K and L (the answer)** →
+**E and M (the last two levers, both null)**
 
 > ## ⚠️ Read this first (2026-07-14)
 >
@@ -29,8 +30,8 @@
 > campaign hard-links the same `sfincs.nc`, so the whole comparison matrix — Faber vs Galibier,
 > the iteration sweeps, the clamp study, wind, friction, the narrows-width test — was asking why
 > a leaking bucket would not fill. **Their null results are now *explained*, not *informative*,
-> and none of them should be cited as physics.** Sections A–F are kept below as the record of how
-> we got here.
+> and none of them should be cited as physics.** The A–F diagnosis is condensed into a single
+> section below — kept as the record of how we got here, not as evidence about the estuary.
 >
 > Both defects are now fixed **at the root** and the domain has been rebuilt (Workstream L):
 > zero free-outflow cells on water, Shark inlet open at −6.17 m, the Sea Bright revetment intact,
@@ -51,13 +52,35 @@
 > * **Faber over Galibier.** The two are bit-identical with waves off; with waves **Galibier
 >   overshoots hard** (gauge +0.57 m, HWM bias +0.97, RMSE 1.14) even with `snapwave_gammax`
 >   restored. Galibier is **unofficially retired**; Faber is the engine going forward.
-> * **MOTF:** CSI **0.51 → 0.64**, FAR **down** 0.17 → 0.14.
+> * **MOTF:** CSI **0.51 → 0.71** on the adopted premier, FAR **down** 0.17 → 0.14. (With waves
+>   *off* the sealed run still reaches 0.64 — i.e. a sealed domain with no waves beats the old
+>   premier with them on.)
 > * ⚠️ **Locality caveat.** The open coast that never broke drifted ~0.1 m on the rebuild
 >   (south_coast −0.055 → +0.048; atlantic_oceanfront swung further), so the fix is **not
 >   *purely* local**. Small next to the gains, but it is the one open thread from this test.
 >
 > Table: `reports/sealed_premier.csv` (from `scripts/analyze_sealed.py`). Figures: the viz
 > notebook's before/after Results section.
+
+> ## ✅ And the last two levers are closed (2026-07-16, Workstreams E and M)
+>
+> Both came back **null on the sealed domain**, which is the first time either got a trustworthy
+> test:
+>
+> * **E — infragravity.** The premier with **one flag** changed (`snapwave_igwaves = 1`). Every
+>   metric moves by ≤0.01 m. IG was forced *hard* at the boundary (a logged 3.02 m `hm0ig`) and
+>   still did nothing to water levels. The wave-overtopping-fills-the-back-bays hypothesis is
+>   dead; the estuary fills because the hole is plugged.
+> * **M — open-boundary depth** (James's suggestion). `mask_zmin` −15 m is a wash; −20 m nails the
+>   Shrewsbury crest (**+0.003 m**) and lifts CSI to 0.724 — but only by raising water everywhere
+>   (HWM bias 0.318 → **0.476**). That is more wetting, not better wetting. **Keep −10 m.**
+> * The **locality test passes** in both arms: south_coast bias held at 0.147, and the Sandy Hook
+>   gauge peak is identical across all four runs (−0.311 ± 0.002).
+>
+> **`sealed_faber_waves` remains the premier.** The one thing E turned up is a *wave* question,
+> not a water-level one: the premier peaks at **hm0 = 7.44 m** inside Sandy Hook Bay, and the IG
+> flag halves it. That is now the most interesting open thread. Table:
+> `experiments/metrics_workstream_MN.csv`.
 
 ---
 
@@ -97,405 +120,60 @@ found it because we finally added the water up.
 
 ---
 
-## Workstream B — Is the model's river channel built correctly?
+## The diagnosis phase — Workstreams B, A, C, D, F/I
 
-### What we were worried about
-
-The model doesn't resolve the river channel cell-by-cell. Instead it uses a *subgrid*
-method: within each coarse grid cell it keeps a small lookup table describing how deep
-and how smooth the flow is at that spot, computed from fine-resolution bathymetry. The
-worry was that this lookup table might quietly under-represent the channel — making it
-too shallow, too rough, or too pinched — which would choke the surge as it tries to
-push up the rivers. If so, that would be fixable: improve the bathymetry, rebuild.
-
-To check, we had to read those lookup tables exactly where the real channel runs
-through the narrows, and compare them against the actual 2015 channel survey (eHydro).
-The tricky part is that the tables are stored in the model's own internal order, with
-no coordinates attached. We reconstructed that ordering and confirmed it lines up
-perfectly (all 1,355,381 entries), so every table entry could be placed on the map and
-matched to a survey depth.
-
-The reusable tool that does all this is
-[`scripts/probe_subgrid_conveyance.py`](../scripts/probe_subgrid_conveyance.py).
-
-### What we found
-
-**The channel is exactly as deep as it should be.** Along the surveyed channel, we
-asked: at a given water level, how much flow depth does the model actually use, versus
-the ideal "water level minus real riverbed"? The answer is a dead-on match at every
-stage, right up through Sandy's peak surge:
-
-| Water level | Flow depth the model uses | Ideal (level − riverbed) | Match |
-|---:|---:|---:|:--:|
-| 0 m | 2.9 m | 3.0 m | ✓ 100% |
-| 1 m | 3.9 m | 4.0 m | ✓ 100% |
-| 2 m | 4.9 m | 5.0 m | ✓ 100% |
-| 3 m (surge) | 5.9 m | 6.0 m | ✓ 100% |
-
-The deep-channel carve we added earlier (to defeat the Rumson–Sea Bright bridge, which
-sits in the elevation data like an earthen dam) is faithfully present: the model's
-deepest channel point matches the survey to within 3 cm.
-
-**The channel is as smooth as it should be.** Roughness (Manning's *n*) in the channel
-comes out at 0.017 — clean open water — while the surrounding marsh comes out at 0.038,
-a realistic salt-marsh value. The marsh roughness is *not* bleeding into the channel
-and slowing it down artificially.
-
-**The inlet is not a bottleneck.** Where the estuary connects to Sandy Hook Bay:
-- the river reaches are 150–230 m wide, which is 12–18 grid cells across — plenty of
-  resolution;
-- the connecting throat has no shallow sill — the bed stays below −9.6 m the whole way
-  through, scoured to −13 m, with hundreds of deep flow paths across every section;
-- the roughness right in the throat is 0.017 (clean) at both low tide and peak surge.
-
-We also ruled out channel *meandering* as a cause: the grid tends to straighten a
-winding channel, which would make it flow *more* easily, not less — so it can't explain
-water coming in too low.
-
-### The verdict from B
-
-The model's channel is faithful — deep enough, smooth enough, wide enough. **The
-under-fill is not a channel-representation error, so there is nothing to fix here and
-no reason to rebuild the grid.**
-
-> **Update (2026-07-10) — B is unaffected by the later convergence finding, and
-> reinforced by it.** Everything in Workstream B is read from the model's static channel
-> tables (the subgrid file), which are built once from the survey and bathymetry. Those
-> tables are byte-for-byte identical across every model version and solver setting we
-> ran — so nothing about the wave-solver discovery in Workstream I touches B's verdict;
-> it needs no re-run. And the convergence fix actually resolves a tension that used to
-> sit between A and B. B said the deep channel conveys the surge faithfully; the fix
-> then showed the surge peak really does get into the estuary once the waves are
-> computed properly. The two findings now agree instead of pulling against each other.
+> **Read this section as history, not as physics.** Every number below was measured on the
+> broken domain (Workstream J found the leak; K plugged it). The *methods* here are sound and
+> still in use; the *values* are not evidence about the estuary, because the bucket had a hole
+> in it. This section is kept short and whole for one reason: **it is the record of a rigorous
+> elimination that could not possibly have succeeded**, and that is the lesson worth carrying.
 >
-> One boundary on B worth keeping in mind (unrelated to the solver): B confirmed the
-> model faithfully reproduces the **2015 channel survey** — not that the survey itself
-> captures the true channel width. Whether the surveyed channel is narrower than reality
-> is a separate question, tested directly by the narrows-widening experiment (Workstream
-> H).
-
-### A useful side-discovery
-
-While digging, we noticed the interior tide gauges in the model are sitting on dry
-ground: the model cells they landed on have bed elevations of +1.4 m, +1.3 m, and
-+2.0 m — above the normal tide range — so those cells are dry most of the time and the
-gauge simply reports the ground elevation. Any tidal measurement read straight off
-those gauge points would be meaningless. This directly shaped how we built the tidal
-metric in Workstream A (we sample genuinely wet channel cells instead).
-
----
-
-## Workstream A — Can we trust the yardsticks?
-
-Before leaning on any verdict, we hardened the three ways we measure the under-fill.
-All of this now lives in [`nj_sfincs/validate.py`](../nj_sfincs/validate.py).
-
-> **Update (2026-07-10) — one of these three yardsticks changed its verdict.** The
-> tools below are all still correct; the numbers were computed on our premier run,
-> which we later found was using an under-converged wave solver (Workstream I). Re-running
-> the same yardsticks on a properly converged model splits them cleanly into two kinds:
->
-> - **The tidal range (§3) is robust.** It is a *pre-storm* measurement, taken before
->   the wave problem occurs and when waves are tiny, so it comes out essentially
->   identical (~half a metre of muting) on every version of the model. This result
->   stands exactly as written.
-> - **The storm-peak yardsticks (§1 gauge crest, §2 high-water marks) do not.** Both are
->   peak measurements, and the convergence fix *raises* the modelled peak in the estuary.
->   On the converged run the Shrewsbury gauge crest goes from **0.67 m low to about
->   0.30 m high** — the deficit doesn't just shrink, it reverses. So the "everything runs
->   low" reading in §1–§2 was in part a numerical artifact, and the honest peak-side
->   story is "matched or slightly over," not "under-filled."
->
-> The datum work (§1), the basin-splitting method (§2), and the wet-cell tidal metric
-> (§3) are all still valid and reusable — it is the peak *values*, not the methods, that
-> shift. The final peak numbers will be re-tabulated once we settle which converged run
-> is the premier (pending the Workstream I cross-checks). The paragraphs below preserve
-> the original 2026-07-08 numbers for the record, with the revised reading flagged.
-
-### 1. The gauge crest — is the target elevation even right?
-
-The historic flood crest at the Shrewsbury gauge is quoted as "11.73 ft," which we
-convert to 2.935 m in our vertical datum. But *which* datum is the 11.73 ft measured
-against? If we guessed wrong, the whole deficit shifts.
-
-**Confirmed:** the National Weather Service gauge page for this site
-([`sbin4`](https://water.noaa.gov/gauges/sbin4)) is explicitly published "in MLLW"
-(mean lower low water). The USGS sensor feed is a *separate* record in a different
-datum — easy to confuse, but we checked. So our conversion is correct and the
-**2.935 m target holds.** (There was a tempting coincidence that would have doubled the
-deficit if the datum were different; the "in MLLW" label rules it out.)
-
-> **Revised (2026-07-10):** the 2.935 m *target* is confirmed and unchanged, but the
-> −0.67 m *deficit* against it was measured on the under-converged run. On a converged
-> run the modelled crest rises to about 3.24 m — roughly 0.30 m **above** the target
-> rather than below it. The target datum is solid; the sign of the gap is not what it
-> looked like.
-
-### 2. The high-water marks — the average was hiding the problem
-
-There are 31 surveyed Sandy high-water marks in the area. Lumped together, the model
-matches them with an average error near zero (−0.05 m) — which looks like the model is
-fine. But that average blends two very different places: the wave-exposed ocean front,
-where the model runs slightly *high*, and the sheltered estuary behind the barrier,
-where it runs low. The two cancel out.
-
-So we split the marks into hydraulic basins and looked at each separately:
-
-| Where the marks are | # marks | Average model error |
-|---|:--:|:--:|
-| *(all lumped together — misleading)* | 30 | −0.05 m |
-| Atlantic ocean front | 3 | **+0.48 m** (model high) |
-| **Shrewsbury / Navesink (behind the barrier)** | 10 | **−0.27 m** (model low) |
-| Open Sandy Hook Bay | 2 | +0.03 m |
-| South coast (Shark River / Belmar) | 4 | +0.06 m |
-
-The behind-the-barrier estuary is the **only** place the model runs low. Everywhere
-else it's spot-on or slightly high. The high-water marks, read properly, independently
-confirm the under-fill — the pooled average had simply washed it out.
-
-> **Revised (2026-07-10):** the *method* here — splitting marks by hydraulic basin
-> instead of pooling them — is the durable contribution, and it still isolates the
-> estuary as the distinctive basin. But the −0.27 m estuary bias is a peak measurement
-> taken on the under-converged run, so it moves with the gauge crest above (toward zero
-> or slightly positive on a converged run). These per-basin biases will be re-tabulated
-> on the final premier; treat the numbers as provisional and the basin *split* as the
-> lasting result.
-
-### 3. The tidal range — the tide comes in muted
-
-Separate from the storm peak, we can check how far the water rises and falls on a
-normal tide before the storm. Using the genuinely-wet channel cells (not the dry gauge
-points from B), over the same pre-storm window as the observations:
-
-| Gauge | Model tide range | Observed tide range | Model is short by |
-|---|:--:|:--:|:--:|
-| Shrewsbury | 0.84 m | 1.37 m | 0.53 m |
-| Shark River | 1.27 m | 1.82 m | 0.55 m |
-
-The tide genuinely arrives muted in the model — about half a metre short of reality —
-*even though* Workstream B showed the deep channel conveys perfectly. That's a strong
-hint the damping is spread out across the shallow, marshy intertidal areas, not
-concentrated in the main channel.
-
-> **Update (2026-07-10) — this is the yardstick that survives, and it is now the
-> headline of A.** Because the tidal range is measured *before* the storm, it is immune
-> to the wave-solver problem that shifted §1 and §2: we get the same ~0.5 m of muting on
-> the original run, on the converged run, and on the interference-wave run alike. So the
-> over-damping of the tide is a genuine, version-independent feature of the model — and
-> with the storm-peak deficit now reversing, it is the clearest remaining evidence that
-> something real slows the water as it spreads across the marshy interior.
-
-### 4 & 5. Two framing fixes
-
-- **The gauge is on a bank, not in the channel.** The Shrewsbury gauge point landed on
-  a cell whose bed is +1.4 m — a bank, not the −4 m channel it was meant to sit in. We
-  now flag this. It does *not* bias the storm peak (at peak the water surface is
-  continuous across the bank and channel), but it *does* ruin a tide-range reading from
-  that point — which is exactly why the tidal metric above uses channel cells instead.
-- **The Sandy Hook gauge died mid-storm.** It failed on the rising tide, before the
-  peak, so comparing the model's peak to the gauge's last reading unfairly makes the
-  model look 0.31 m low. We now report both honestly: the fair pre-failure comparison
-  (−0.31 m against a truncated record) *and* the model's true peak of 3.15 m, which the
-  dead gauge never lived to see.
-
----
-
-## Putting it together
-
-The three cleaned-up yardsticks originally told one story — everything runs low. The
-2026-07-10 convergence finding splits that into two, and the split is more informative
-than the original agreement:
-
-| Measurement | Original (2026-07-08) | Revised reading (2026-07-10, converged solver) |
-|---|:--:|---|
-| Gauge flood crest | −0.67 m (low) | **≈ +0.30 m (slightly high)** — deficit reverses |
-| High-water marks (estuary only) | −0.27 m (low) | moves toward zero / slightly high (re-tabulation pending) |
-| Tidal range | −0.53 m (muted) | **−0.5 m (muted) — unchanged, version-independent** |
-
-The peak-based rows moved because they were measured on an under-converged wave solver;
-the tidal-range row did not move because it is a pre-storm measurement the solver problem
-never touched. So the honest synthesis is now:
-
-- The **storm surge peak** is delivered into the estuary correctly once the numerics are
-  sound — matched or slightly over, not under. Workstream B explains *why* it can be: the
-  channel is deep, smooth, and wide enough to convey it. B and the peak measurements now
-  agree.
-- The **tide** is nonetheless over-damped by about half a metre — a real,
-  version-independent feature — as it spreads across the shallow, marshy interior. This
-  is the durable "something's off in the estuary" signal, and it lives in the distributed
-  intertidal geometry, not the main channel (B) and not the surge.
-
-**What this means for next steps:**
-
-- No grid rebuild for the channel — that lever is exhausted.
-- Write up the validation using these three sharpened yardsticks (gauge crest,
-  basin-split high-water marks, tidal range) rather than the blunt basin-wide flood
-  extent — but **lead with the tidal range**, the one that holds up across model
-  versions, and report the storm-peak numbers on the converged premier once it is settled.
-- The **model's numerics turned out to matter more than expected** — the wave-solver
-  convergence fix (Workstream I) was what reversed the peak deficit. Finalizing the
-  converged premier is now a prerequisite for re-tabulating the peak-based validation.
-- The remaining things worth testing are outside the channel: the **wind and boundary
-  forcing** (Workstreams C and D) and the **model's numerics/physics** (the SFINCS
-  upgrade and the wave-solver convergence, Workstreams F and I).
-
----
-
-## Workstream C — Is water escaping out the north boundary?
-
-### What we were worried about
-
-The advisor raised a sharp question: the model's north/northwest edge (the Raritan
-Bay / New York Harbor side) is an *open* water-level boundary. What if surge water
-that should be piling into the estuary is instead **leaking out** that open edge —
-draining away head that would otherwise push the tide up the Shrewsbury and Navesink?
-If so, the under-fill would be a boundary artifact, not a conveyance problem, and
-sealing the edge would fill the rivers.
-
-### What we found — the boundary is a *source*, not a leak
-
-We measured the actual net flow of water across that boundary line directly, using
-the model's stored velocities. The result is unambiguous and points the opposite way
-from the worry:
-
-| Across the N/NW line (open run) | Value | Direction |
-|---|:--:|---|
-| Peak flow rate | 28,200 m³/s | **into** the bay (southward) |
-| Total over the storm | 1.7 billion m³ | **net inflow** from the harbor |
-
-Water flows **in** across that edge, strongest right at the surge peak — it does not
-escape. This matches what we already knew about the forcing: the boundary is pinned to
-the observed Battery water level (~3.4 m), which is *higher* than the under-filled
-estuary, so physically it can only feed water toward the rivers, never drain them.
-
-The practical consequence: **sealing the boundary removes real inflow rather than
-plugging a leak.** That's the reverse of the escape hypothesis. The formal confirmation
-is an A/B "wall" experiment — an otherwise-identical run with the north edge closed off.
-
-### The wall experiment confirms it
-
-The wall run has now finished. Closing the north edge does raise the estuary a little —
-but only by shoving the whole bay to a physically impossible level:
-
-| At the surge peak | Open run | Walled run | Change |
-|---|:--:|:--:|:--:|
-| Sandy Hook Bay | 3.15 m | **4.97 m** | +1.8 m (vs ~3.4 m observed) |
-| Shrewsbury River | 2.27 m | 2.87 m | +0.6 m |
-
-To buy 0.6 m in the river, the wall has to super-elevate the bay by 1.8 m — to nearly
-5 m, about a metre and a half above what actually happened at Sandy Hook. In other
-words, you can only fill the rivers this way by making the bay badly wrong. The wall is
-a diagnostic, not a fix: it *quantifies* how much artificial head it would take to force
-the rivers up, and confirms the boundary itself is not the cause.
-
-### The verdict from C
-
-The direct water budget and the wall experiment agree: the north boundary is delivering
-water to the bay, not bleeding it away, so **the escape hypothesis is refuted** and the
-boundary is not the deficit.
-
-> **Audit note (2026-07-10).** Both C runs were checked against the wave-solver
-> instability found in Workstream I. They are clean: they use the older (Faber) engine,
-> which — unlike the newer Galibier engine — stayed well-behaved, with no runaway waves
-> anywhere in the domain. C's headline flux finding is a water-*budget* number driven by
-> the observed Battery boundary level; it barely depends on the wave physics at all, so
-> it is robust and premier-independent — it stands as written. The one thing that shifts
-> is the *framing*: C was posed as "what explains the under-fill?", and the convergence
-> discovery has since put the very existence of a peak-time under-fill in question (a
-> converged run slightly *overshoots* the estuary crest). So read C not as "the boundary
-> doesn't cure the under-fill" but as the cleaner, premise-free statement it always was:
-> **the north boundary is a source, not a leak.**
-
----
-
-## Workstream D — Does more wind push the water up the rivers?
-
-### What we were worried about
-
-Storm surge in a shallow bay is largely wind-driven: the wind drags the water surface
-and piles it up against the coast. If our model's wind drag were set too weak, the whole
-bay-and-estuary system would sit low, and the rivers would under-fill for that reason
-alone. Wind drag is a genuinely uncertain parameter, so it is a fair lever to test.
-
-We ran two sensitivity cases that increase the wind drag coefficient by 20% and 30%
-above our baseline — a deliberately generous bracket — and asked whether the extra push
-lifts the estuary.
-
-### What we found — wind is a null lever here
-
-| Run | Wind drag | Shrewsbury peak | Change vs baseline |
-|---|:--:|:--:|:--:|
-| Baseline | ×1.00 | 2.223 m | — |
-| More wind | ×1.20 | 2.225 m | +0.002 m |
-| Even more wind | ×1.30 | 2.227 m | +0.004 m |
-
-Cranking the wind drag up by nearly a third moves the Shrewsbury peak by **four
-millimetres**. It is, to the precision that matters, no effect at all. (At Sandy Hook the
-peak nudges very slightly *down*, not up.) The estuary level simply is not gated by how
-hard the wind is pushing on the bay — the water is already being delivered to the estuary
-mouth; more wind doesn't change what happens once it's there.
-
-This dovetails with everything else: the barrier-side bay levels validate well already,
-so there is no missing wind push to be found, and adding it doesn't help the rivers.
-
-### The verdict from D
-
-Wind-drag magnitude is not the lever. Like the boundary, it is crossed off.
-
-> **Audit note (2026-07-10).** The wind runs were checked against the Workstream I
-> instability and are clean (older Faber engine, no runaway waves). Because this is a
-> before-and-after comparison sharing the same solver settings, the near-zero *difference*
-> is robust even if the shared baseline itself later shifts to a converged premier. The
-> one soft spot: wind also feeds the wave model, which is the part with the convergence
-> issue — so if we want to be airtight we would re-confirm the null once against the
-> converged engine, a cheap check. As with C, the *framing* softens (this was posed as a
-> cure for an under-fill whose peak-time existence is now in question), but the result
-> itself — **wind magnitude does essentially nothing to the estuary** — is premier-
-> independent and stands.
-
----
-
-## Workstream F — Upgrading the model engine (and why it matters for waves)
-
-A newer release of SFINCS — **v2.4.0 "Galibier"** (June 2026) — reworks the wave physics
-we had tried and set aside. Two changes matter here:
-
-1. *"Improvements of the integrated SnapWave solver for wave breaking, and resulting
-   wave-induced setup, on steeper coasts."* This is the substantive change for us. It is
-   the most likely reason the infragravity experiment (below) is now stable — and, as it
-   turned out, also the source of a new numerical wrinkle we had to chase down
-   (Workstream I; see the caution below).
-2. *"Fixed bug with wavemakers, with waves forced from the north"* — which affected an
-   earlier wavemaker experiment.
-
-> **Correction (2026-07-10).** An earlier draft of this section credited Galibier with
-> *"Fixed bug in SnapWave IG source term implementation."* That is real, but it belongs
-> to the **previous** release (v2.3.0 "Faber," Feb 2025) — the engine our premier run
-> *already* used. So the IG blow-up we saw earlier was **not** simply that old bug, and
-> Galibier is **not** stable-because-it-fixed-the-IG-source-term. Whatever cured the IG
-> instability is one of Galibier's *other* changes, most plausibly the wave-breaking
-> rework in (1). The corrected takeaway is unchanged in spirit — our old "IG is unstable"
-> verdict deserves a fresh look on the new engine — but for the right reason.
-
-We confirmed the new engine drops straight into our setup: the model's pre-computed
-channel/marsh tables load without any rebuild, and a regression run (identical inputs,
-new engine) reproduces our premier result closely enough to trust it.
-
-**The infragravity re-test is encouraging.** On the new engine the bay infragravity wave
-height is now a physical few centimetres — **stable, no blow-up** — where the old run
-exploded to billions of metres. IG finally gets a *fair* test, and we can no longer be
-accused of dismissing it on the strength of a known bug.
-
-> **Caution (2026-07-10) — the new engine is not a free upgrade.** While validating
-> Galibier we found it can produce isolated, unphysical wave spikes on steep coasts (a
-> 250 m wave at the bay mouth) when the wave solver is left at its default iteration
-> limit — the flip side of the very wave-breaking rework that helps elsewhere. Raising
-> the solver's iteration budget largely cures it, but two different fixes disagree on the
-> exact estuary level and neither fully eliminates the spikes, so we do **not** yet have a
-> settled, converged premier on Galibier. This is now its own small investigation
-> (Workstream I), and the peak-based validation numbers in Workstream A are waiting on its
-> outcome. The IG stability result above is unaffected — that run was one of the clean
-> ones.
+> An earlier draft carried a second layer of corrections dated 2026-07-10, re-reading these
+> numbers against a wave-solver convergence finding (Workstream I). Those corrections have
+> themselves been superseded — they were re-interpreting measurements taken on a leaking
+> domain. They are dropped here rather than nested three deep; the durable parts are below.
+
+**What we asked, and what came back.** Five levers, two months, every one null:
+
+| | The worry | What we found | Verdict |
+|---|---|---|---|
+| **B** — channel | The subgrid tables under-represent the channel: too shallow, rough, or pinched, choking the surge | Flow depth matches "level − surveyed bed" at **every** stage through the peak; channel *n* = 0.017 (clean water) vs 0.038 marsh, no bleed; throat has no sill (bed below −9.6 m, scoured to −13 m); reaches 12–18 cells wide | **Faithful.** No rebuild. |
+| **A** — yardsticks | We are measuring the deficit wrong | The 2.935 m gauge target is datum-confirmed; the pooled HWM average was hiding the signal; the tide arrives ~0.5 m muted | **Sound.** See methods below. |
+| **C** — north boundary | Surge is leaking out the open Raritan/NY-Harbor edge | It runs **in**: peak 28,200 m³/s southward, **1.7 billion m³ net inflow**. The wall A/B buys 0.6 m in the river only by super-elevating the bay to 4.97 m (~1.5 m above observed) | **Refuted.** A source, not a leak. |
+| **D** — wind | Wind drag is set too weak | ×1.20 → **+0.002 m**; ×1.30 → **+0.004 m** on the Shrewsbury peak | **Null.** Four millimetres. |
+| **F/I** — engine | The wave physics / solver is wrong | Galibier's breaking rework runs, but throws unphysical spikes at the default iteration limit; raising the budget largely cures them, two fixes disagree on the estuary level | **Unsettled** — and moot after K. |
+
+**The methods are the durable contribution.** Four of them outlived every number they produced,
+and all now live in [`nj_sfincs/validate.py`](../nj_sfincs/validate.py) and
+[`scripts/probe_subgrid_conveyance.py`](../scripts/probe_subgrid_conveyance.py):
+
+* **Split the high-water marks by hydraulic basin.** Pooled, the 31 Sandy marks gave a
+  near-perfect −0.05 m and said the model was fine. Split, they showed the ocean front running
+  high and the estuary running low — two errors cancelling into a reassuring average. Basin
+  splitting is how the under-fill became visible at all, and it is how the Shark River dam was
+  eventually caught.
+* **Read the tide off genuinely wet channel cells, never the gauge points.** B's side-discovery:
+  the interior gauge cells sit on banks at +1.4/+1.3/+2.0 m, dry most of the tide, reporting
+  ground elevation. Any tide read from them is meaningless.
+* **Confirm the datum before trusting the target.** The 11.73 ft crest is published "in MLLW"
+  on the NWS page ([`sbin4`](https://water.noaa.gov/gauges/sbin4)); the USGS sensor feed is a
+  separate record in a different datum. → **2.935 m**, and a tempting coincidence that would
+  have doubled the deficit is ruled out.
+* **Report a dead gauge honestly.** Sandy Hook failed on the rising tide, before the peak.
+  We report both the fair pre-failure comparison **and** the model's true peak, which the gauge
+  never lived to see.
+
+**And the trap, named.** Two of these metrics are biased in opposite directions and neither may
+be led with alone: the wet-only HWM average **structurally rewards failing to flood** (marks the
+model leaves dry drop out, improving the remaining average — this is what hid the Shark dam for
+months), while MOTF's POD **rewards over-flooding**. `hwm_metrics` now scores dry marks against
+the model's own ground elevation instead of dropping them. Read `hwm_n_dry` beside any bias.
+
+**Why the nulls misled us.** Read down that table and the honest conclusion in early July was
+that the residual must be a *distributed conveyance ceiling* — not a fixable knob. Every lever
+really was excluded; the elimination was sound. The defect was simply not on the list, because
+nobody writes "audit the region polygon" on a list of physics. **The nulls were the clue, and we
+read them as a ceiling instead of a hole.**
 
 ---
 
@@ -823,6 +501,117 @@ and confounded attribution. L4 was already measured as a null lever, so it is ex
 
 ---
 
+## Workstream E — Infragravity, at last a fair test (and a null)
+
+E was the one lever the investigation never got a clean answer on. The old verdict — "IG is
+unstable" — was earned on a run that exploded to billions of metres, and Workstream F's
+correction took away our excuse for dismissing it: the IG source-term bug belonged to Faber,
+the engine our premier *already* ran. So IG was owed a fair test, and the sealed domain is the
+first place one was possible.
+
+The test is as clean as this project gets. `sealed_igwaves_wind` is the premier with **exactly
+one line changed**:
+
+```
+snapwave_igwaves     = 0   →   1
+```
+
+Everything else — mesh, subgrid, forcing, support points, tuned physics — is byte-identical
+(the ~1.8 GB of shared inputs are hard-linked from `_template_sealed`). Any difference is IG
+and only IG.
+
+**There is no difference.**
+
+| | premier (`sealed_faber_waves`) | **IG on** | Δ |
+|---|---|---|---|
+| Shrewsbury gauge (obs 2.94) | 2.837 | 2.827 | −0.010 |
+| HWM bias | 0.318 | 0.317 | −0.001 |
+| HWM RMSE | 0.480 | 0.480 | ~0 |
+| MOTF CSI | 0.706 | 0.704 | −0.002 |
+| MOTF FAR | 0.141 | 0.141 | ~0 |
+| Shrewsbury/Navesink HWM bias | 0.435 | 0.432 | −0.003 |
+| Shark frac-rising | 0.542 | 0.542 | 0 |
+
+Every number is inside the noise, and every one that moves at all moves *down*. **Infragravity
+is a null lever on this domain**, and unlike the pre-K nulls this one is trustworthy: it was
+measured on a sealed bucket, against a premier that differs by a single flag. The null is visual
+too: in `figures/motf_panels_EM.png` and `figures/hwm_panels_EM.png` the IG panel and the premier
+panel beside it are the same picture.
+
+Two honest caveats, neither of which rescues IG:
+
+* The run logged `computed hm0ig at boundary exceeds 3 meter: 3.023 - please check whether this
+  might be realistic!` at ~60% of the run. So IG was **not** quietly switched off — it was
+  forced hard at the boundary, arguably too hard, and *still* did nothing to water levels. That
+  strengthens the null rather than qualifying it.
+* IG on **halves** peak Sandy Hook Bay wave height (max hm0 **7.44 → 3.98 m**) while leaving
+  every water level alone. Worth a note: the premier's 7.44 m peak in a bay of that fetch looks
+  high on its face, and the IG arm is the only thing that has moved it. That is a question about
+  the *wave* field, not the under-fill, and it is now the more interesting thread of the two.
+
+**The verdict from E.** The back-bay-filling-by-IG-overtopping hypothesis does not survive its
+own fair test. E is **closed** — and after K it was never load-bearing anyway: the estuary fills
+because the hole is plugged, not because a long-period wave carries it over the barrier.
+
+---
+
+## Workstream M — The open-boundary depth (James's suggestion)
+
+The premier activates cells at `mask_zmin = -10 m`. James's suggestion was to let surge and
+waves enter in **deeper** water, so they shoal across more shelf and the known 2Δx boundary-edge
+zs ring sits further offshore. No rebuild was needed: the sealed mesh reaches −69 m and every
+one of its 547,408 faces already carries subgrid tables, so a deeper contour only *activates*
+faces that already have them. Two arms, `-15` and `-20 m`, staged on the frozen sealed mesh.
+(The `.inp` files are byte-identical to the premier's — the change lives entirely in the mask
+and boundary, which is what it should be.)
+
+| | premier (−10) | **−15** | **−20** |
+|---|---|---|---|
+| Shrewsbury gauge (obs **2.935**) | 2.837 | 2.785 | **2.938** |
+| Shrewsbury gauge err | −0.099 | −0.150 | **+0.003** |
+| HWM bias | **0.318** | 0.299 | 0.476 |
+| HWM RMSE | **0.480** | 0.470 | 0.646 |
+| MOTF CSI | 0.706 | 0.696 | **0.724** |
+| MOTF POD | 0.799 | 0.787 | **0.822** |
+| MOTF FAR | 0.141 | 0.142 | 0.141 |
+| Shrewsbury/Navesink HWM bias | 0.435 | 0.411 | 0.699 |
+| Atlantic oceanfront HWM bias | 0.312 | 0.273 | 0.400 |
+| **south_coast HWM bias** (locality test) | 0.147 | 0.137 | 0.147 |
+| Sandy Hook gauge peak err | −0.312 | −0.313 | −0.310 |
+
+**−15 m is a wash** — marginally worse on every headline (CSI 0.696, gauge err −0.150). There is
+nothing there.
+
+**−20 m is a genuine trade-off, and it should not be adopted on these numbers.** It does two
+attractive things: it **nails the surveyed Shrewsbury crest** (err **+0.003 m** — the best in the
+campaign, against the premier's −0.099) and it lifts CSI 0.706 → **0.724** and POD 0.799 → 0.822
+at *unchanged* FAR. But it buys them by **raising water everywhere**: HWM bias inflates 0.318 →
+**0.476**, RMSE 0.480 → 0.646, and Shrewsbury/Navesink HWM bias 0.435 → **0.699**. The CSI gain
+is **more wetting, not better wetting** — the model is over-predicting, and MOTF's POD rewards
+exactly that. A gauge that lands on the crest while the marks around it drift half a metre high
+is a coincidence of two errors, not a better model. The HWM panel makes the trade visible: in
+`figures/hwm_panels_EM.png` the −20 m arm is the reddest of the four, and its extra MOTF green in
+`figures/motf_panels_EM.png` comes with extra red.
+
+**The locality test passes.** South-coast bias held at **0.147 → 0.147** (−20) and 0.137 (−15) —
+the basins that never broke did not move. The oceanfront moved where the plan predicted it
+should (0.312 → 0.400 under −20), which is the deeper contour acting on the open coast rather
+than coupling into the interior. And the Sandy Hook gauge peak is **identical across all four
+runs** (−0.311 ± 0.002): the boundary depth does not touch the open-coast crest at all. Shark's
+tide holds everywhere (frac-rising 0.542, range 1.30–1.33).
+
+**The verdict from M.** The boundary contour is **not** the lever for the remaining error. Keep
+`mask_zmin = -10`. The one thing −20 m does prove is that the residual Shrewsbury deficit *can*
+be closed by pushing more water in — but doing so overshoots the marks, which says the deficit
+is not a boundary-admission problem. `sealed_faber_waves` remains the premier.
+
+*(Data: `experiments/metrics_workstream_MN.csv`, all four runs scored through the same
+`nj_sfincs.validate.evaluate` path as Workstream O. Jobs 58185237/38/39, 1h42m–2h05m each on 64
+threads; all three reached 100% and closed off cleanly, full 73-hour window, no truncation.
+SnapWave is ~91% of runtime in every arm.)*
+
+---
+
 ## Where this leaves the investigation
 
 The estuary under-fill — the question this report was opened to answer — **is solved, and
@@ -867,18 +656,42 @@ mask edit — by fixing the cause instead of the symptom.
 
 The flood extent improves too, and *honestly*:
 
-| | CSI | POD | FAR | miss |
-|---|---|---|---|---|
-| broken premier, **with** waves | 0.51 | 0.56 | 0.17 | 15.3 km² |
-| sealed + carved, **no** waves | **0.64** | **0.72** | **0.14** | **9.9 km²** |
+| | CSI | POD | FAR |
+|---|---|---|---|
+| broken premier, **with** waves (`snapwave_tuned`) | 0.51 | 0.56 | 0.17 |
+| sealed + carved, **no** waves | 0.64 | 0.72 | 0.14 |
+| **sealed + carved, with waves — the adopted premier** | **0.71** | **0.80** | **0.14** |
+
+![Modeled flood extent vs FEMA MOTF: broken premier, sealed premier, and the two new arms](figures/motf_panels_EM.png)
+
+*Blue is the model failing to flood ground FEMA recorded as wet. Read panel 1 → panel 2: the
+**blue that fills the Shrewsbury/Navesink arms in the broken premier turns green once the domain
+is sealed** — that is the leak fix, in one picture. Panels 3–4 are the new arms: **M** (−20 m)
+adds a little more green but also more red, and **E** (IG on) is indistinguishable from the
+premier beside it. All four panels share one scale and one set of categories.*
 
 The blue "miss" areas in the back-bays have turned to hits. And note the **false-alarm rate went
 down** — this is not the model over-flooding to game a metric that rewards exactly that (MOTF's
-POD does). A run with the waves *switched off* now beats the old premier with them on.
+POD does). Even with the waves *switched off*, the sealed domain beats the old premier with them
+on.
 
-What remains to check on the wave arms: the locality test — **south-coast bias must stay pinned
-at −0.0553**. A domain fix is local. If the open coast moves, we changed something we did not
-mean to.
+![Sandy high-water-mark residuals for the same four runs](figures/hwm_panels_EM.png)
+
+*The same four runs against the surveyed high-water marks (q≤2), one colour scale throughout: red
+= the model stands too high, blue = too low. The broken premier is the mixed panel the pooled
+average used to hide — blue in the estuary, red on the ocean front, cancelling to a reassuring
+−0.09 m. The sealed premier lifts the estuary marks without a basin going blue. **M's panel is
+visibly the reddest**: −20 m does not fix a deficit, it raises everything, which is why its
+better CSI is not a better model. Deliberately no bias printed on these panels — the numbers
+belong to the tables above, for the reason in "What is still open".*
+
+**The locality test — and the one place it does not fully pass.** A domain fix should be local, so
+the basins that never leaked must not move. Against the *sealed* arms that mostly holds — south-coast
+bias is stable at 0.147 across the premier and both boundary-depth arms, and the Sandy Hook gauge
+peak is identical to ±0.002 m across all four. But measured against the **pre-rebuild** baseline it
+does not: south_coast moved −0.055 → +0.048 on the rebuild, and the Atlantic oceanfront swung
+further. The fix is therefore **not purely local**, which is small next to the gains but remains
+a genuine open thread rather than a passed test.
 
 ### What is still open
 
@@ -890,14 +703,32 @@ mean to.
   against Galibier's instability.)
 - **The +1.03 m Atlantic-oceanfront bias**, which the leak fix left standing (it was +0.73 m
   before). This is now the **largest remaining error in the model**, and unlike everything above
-  it is a genuine physics question rather than a plumbing one.
-- **The open-boundary depth** (James's suggestion): sweep `mask_zmin` −10 / −15 / −20. Needs no
-  rebuild — the mesh reaches −69 m and every face already has subgrid tables.
+  it is a genuine physics question rather than a plumbing one. (On the sealed premier this reads
+  +0.31 m; the boundary-depth sweep in **M** moves it around — −0.03 with waves off, +0.40 at
+  `mask_zmin = -20` — but does not fix it.)
+- **Sandy Hook Bay's wave field.** The premier peaks at **hm0 = 7.44 m** inside the bay, which
+  looks high for that fetch, and Workstream E found the IG flag *halves* it (→ 3.98 m) while
+  touching no water level. Nothing in this report has yet asked whether the bay's wave heights
+  are right — only whether the water levels are. Turned up by E; it is now the most interesting
+  open thread.
+- **`hwm_metrics` is sensitive to the raster's EXTENT, and we do not know why.** Scoring
+  `snapwave_tuned_25m` from the full L3 raster gives bias **−0.090** / RMSE **0.696** — the value
+  every CSV and table here quotes. The identical call on the *same run*, from a raster clipped to
+  the validation area, gives **+0.024** / **0.468**. The sealed runs agree to ~0.01 m either way,
+  so it is not a constant offset, and it is not the sampling radius (both are 6.2495 m/px → an
+  8 px search). Found 2026-07-16 while building the HWM figure; the figure now shows the pattern
+  and leaves the numbers to the tables. **Until this is explained, treat the full-raster path
+  (`validate.load_floodmap`) as the only authoritative scorer** — and note that a metric which
+  moves with the window it is measured through is exactly the kind of quiet infrastructure fault
+  this investigation already lost two months to.
 
 **Retired.** *D (wind)* stands as a null lever and is **not** being re-run: it measured +0.002 m,
 which is not "the leak ate it" but *no forcing response at all*, and a few km of fetch over a
 3.8e7 m³ prism gives wind no mechanism to act through whether the bucket holds or not.
 *C (the north boundary wall)* is answered — the boundary is a source, not a leak, and the NW
 corner was one of the three leaking cuts, now sealed by construction. *H (narrows width)* is
-moot: the estuary fills once sealed, so the conveyance hypothesis is dead. *E (infragravity)*
-remains genuinely open.
+moot: the estuary fills once sealed, so the conveyance hypothesis is dead. *E (infragravity)* is
+now **closed** — it got its fair test on the sealed domain (premier + one flag) and came back a
+null, moving every metric by ≤0.01 m. *M (open-boundary depth)* is **answered and not adopted**:
+−15 m is a wash, −20 m nails the gauge only by over-predicting everything around it. Keep
+`mask_zmin = -10`.
