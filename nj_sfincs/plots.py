@@ -675,38 +675,74 @@ def plot_engine_difference(run_a, run_b, root=None, window=SHREWSBURY_WINDOW,
 # The two figures that matter for the rebuilt domain. Both live here rather than in
 # the notebook so the notebook stays thin (and so they survive an nbstripout wipe).
 
-GAUGES = {
-    "shrewsbury": dict(sid=1407600, lon=-73.97470, lat=40.36560,
-                       label="Shrewsbury R. (USGS 01407600)"),
-    "shark": dict(sid=1407770, lon=-74.02610, lat=40.18560,
-                  label="Shark R. at Belmar (USGS 01407770)"),
-}
 # Post-event SURVEYED crest at Shrewsbury. There is no hydrograph for it — the gauge
 # died in the storm — so it is a single point, not a curve. See validate.SHREWSBURY_CREST.
 SHREWSBURY_CREST_M = 2.935
 
+# The gauges that fall INSIDE the rebuilt domain, in two groups. Each entry carries
+# its own observation source ``(filename, variable, station_id)`` because they come
+# from three different products — NOAA CO-OPS, the USGS storm-tide sensor network, and
+# the USGS interior tidal gauges — that do not share a file or even a variable name.
+# (The Battery / Atlantic City / Cape May NOAA gauges are OUT of the mesh bbox, so the
+# model cannot be sampled at them; they are deliberately absent.)
+GAUGES = {
+    # ── SURGE / forcing delivery — read the STORM PEAK ───────────────────────
+    "sandy_hook": dict(
+        kind="surge", lon=-74.0091, lat=40.4669, his="sandy_hook",
+        label="Sandy Hook (NOAA 8531680)",
+        obs=("noaa_sandy_validation.nc", "waterlevel", 8531680),
+        note="failed ~1 h short of the bay peak — its top is a floor, not the crest",
+    ),
+    "sea_bright_sss": dict(
+        kind="surge", lon=-73.97304, lat=40.37222, his="usgs_stormtide_sea_bright",
+        label="Sea Bright open coast (USGS storm-tide sensor 2258)",
+        obs=("sandy_storm_tide_nj.nc", "stormtide_m", 2258),
+        note="USGS rapid-deployment sensor set out for Sandy — caught the storm-tide crest",
+    ),
+    # ── INTERIOR — read the PRE-STORM TIDE (left of the record-end line) ──────
+    "shrewsbury": dict(
+        kind="tide", lon=-73.97470, lat=40.36560,
+        label="Shrewsbury R. (USGS 01407600)",
+        obs=("usgs_sandy_tidal_nj.nc", "waterlevel", 1407600),
+        crest=SHREWSBURY_CREST_M,
+    ),
+    "shark": dict(
+        kind="tide", lon=-74.02610, lat=40.18560,
+        label="Shark R. at Belmar (USGS 01407770)",
+        obs=("usgs_sandy_tidal_nj.nc", "waterlevel", 1407770),
+    ),
+}
+
 
 def plot_gauge_verification(runs, root=None, data_dir=DATA, hours=None):
-    """Observed vs modelled water level at the two interior gauges.
+    """Observed vs modelled water level at the four gauges inside the domain.
 
-    WHY THIS FIGURE EXISTS, AND WHY THE SHORT RECORD IS NOT A PROBLEM.
+    TWO READINGS IN ONE FIGURE.
 
-    Both USGS gauges DIED at 2012-10-29 03:54 — roughly 20 h before Sandy's peak — so
-    neither has a storm crest, and the Shrewsbury "2.935 m" is a post-event SURVEYED
-    high-water mark, not a measurement (drawn here as a single star, not a line).
+    Top two panels — SURGE / FORCING DELIVERY. Sandy Hook (NOAA 8531680) at the bay
+    mouth, and the USGS storm-tide sensor USGS set out on the Sea Bright open coast
+    *specifically for Sandy* (its rapid-deployment SSS network). These say whether the
+    offshore boundary delivers the surge to the coast at the right height. The SSS
+    caught the storm-tide CREST (3.47 m); Sandy Hook failed ~1 h short of the bay
+    peak, so the top of its trace is a floor, not the crest.
 
-    That sounds like a weak validation, and for the SURGE it is. But it is exactly the
-    right instrument for the two bugs this project just fixed, because what the record
-    *does* contain is a clean **pre-storm tide** — and both defects destroy the tide:
+    Bottom two panels — INTERIOR PRE-STORM TIDE. Both USGS river gauges DIED at
+    2012-10-29 03:54, ~20 h before the peak, so neither carries a crest (Shrewsbury's
+    2.935 m is a post-event SURVEYED mark, drawn as a single star). What they DO carry
+    is a clean pre-storm tide — the right instrument for the two bugs this project
+    fixed, because both destroy the tide:
 
       * the Navesink leak drained the estuary from a flat start, so the modelled level
         fell monotonically instead of oscillating;
       * the Shark River Inlet dam cut that basin off from the ocean entirely, so it
         NEVER oscillated at all (fraction of time rising = 0.00, against 0.47 observed).
 
-    So read the left half of these panels, not the right. If the sealed model tracks the
-    observed tide at Shark, the inlet is genuinely open — and that conclusion needs no
-    storm peak and no high-water marks at all.
+    So on the bottom panels read the left half, not the right: if the sealed model
+    breathes with the observed tide at Shark, that inlet is genuinely open — a
+    conclusion that needs no storm peak and no high-water marks at all.
+
+    (The Battery / Atlantic City / Cape May NOAA gauges survived the storm with real
+    crests but fall OUTSIDE the mesh, so the model cannot be sampled at them.)
 
     ``runs``: {label: experiment_dir_name}, or a list of names.
     """
@@ -719,60 +755,97 @@ def plot_gauge_verification(runs, root=None, data_dir=DATA, hours=None):
     if not isinstance(runs, dict):
         runs = {r: r for r in runs}
 
-    obs = xr.open_dataset(str(Path(data_dir) / "gtsm" / "usgs_sandy_tidal_nj.nc"))
-    ot = pd.to_datetime(obs["time"].values)
+    obs_cache: dict = {}
 
-    fig, axes = plt.subplots(len(GAUGES), 1, figsize=(11, 4.2 * len(GAUGES)), sharex=True)
+    def _obs(fname):
+        if fname not in obs_cache:
+            obs_cache[fname] = xr.open_dataset(str(Path(data_dir) / "gtsm" / fname))
+        return obs_cache[fname]
+
+    fig, axes = plt.subplots(len(GAUGES), 1, figsize=(11, 3.9 * len(GAUGES)), sharex=True)
     axes = np.atleast_1d(axes)
 
     for ax, (key, g) in zip(axes, GAUGES.items()):
-        ow = obs["waterlevel"].sel(stations=g["sid"]).values
+        is_tide = g["kind"] == "tide"
+        fname, var, sid = g["obs"]
+        ods = _obs(fname)
+        ot = pd.to_datetime(ods["time"].values)
+        ow = ods[var].sel(stations=sid).values
         ax.plot(ot, ow, color="k", lw=2.2, label="observed", zorder=5)
-        # mark where the instrument dies — everything right of this is model-only
+        # mark where the instrument's record ends — everything right is model-only
         t_die = ot[np.isfinite(ow)][-1]
         ax.axvline(t_die, color="k", ls=":", lw=1.2)
         ax.axvspan(t_die, ot[-1] + pd.Timedelta("36h"), color="0.92", zorder=0)
-        ax.text(t_die, ax.get_ylim()[1], "  gauge dies", va="top", ha="left",
+        ax.text(t_die, ax.get_ylim()[1], "  record ends", va="top", ha="left",
                 fontsize=8, color="0.35")
 
-        o_sig = _tidal_signal(ow)
-        for i, (label, name) in enumerate(runs.items()):
+        o_sig = _tidal_signal(ow) if is_tide else None
+        for label, name in runs.items():
             d = root / name
-            if not (d / "sfincs_map.nc").exists():
-                continue
-            mp = xr.open_dataset(d / "sfincs_map.nc")
-            cells = _wet_channel_cells(d, g["lon"], g["lat"])
-            if cells is None:
-                continue
-            idx = cells[0]
-            zs = mp["zs"].isel(nmesh2d_face=idx).values
-            full = np.isfinite(zs).all(axis=0)
-            if not full.any():
-                continue
-            series = np.median(zs[:, full], axis=1)
-            mt = pd.to_datetime(mp["time"].values)
-            # the tide statistic over the same pre-storm window the gauge covers
-            pre = mt <= t_die
-            sig = _tidal_signal(series[pre]) if pre.sum() > 3 else dict(frac_rising=np.nan)
-            ax.plot(mt, series, lw=1.5, alpha=0.9,
-                    label=f"{label}   (rises {sig['frac_rising']:.2f} of the time)")
+            if is_tide:
+                # INTERIOR gauges: the SFINCS obs points snap to dry high-ground banks
+                # (point_zb up to +2 m → no tidal signal), so sample the median of the
+                # genuine wet CHANNEL cells near the gauge's true coordinate instead.
+                if not (d / "sfincs_map.nc").exists():
+                    continue
+                mp = xr.open_dataset(d / "sfincs_map.nc")
+                cells = _wet_channel_cells(d, g["lon"], g["lat"])
+                if cells is None:
+                    continue
+                zsc = mp["zs"].isel(nmesh2d_face=cells[0]).values
+                full = np.isfinite(zsc).all(axis=0)
+                if not full.any():
+                    continue
+                series = np.median(zsc[:, full], axis=1)
+                mt = pd.to_datetime(mp["time"].values)
+                # tide statistic over the same pre-storm window the gauge covers
+                pre = mt <= t_die
+                sig = _tidal_signal(series[pre]) if pre.sum() > 3 else dict(frac_rising=np.nan)
+                tag = f"rises {sig['frac_rising']:.2f} of the time"
+            else:
+                # OPEN-COAST surge gauges: sample the model AT the sensor (its his obs
+                # point). Here the wet-channel median is the WRONG tool — it skips the
+                # +2 m shorefront cell the sensor sat on and grabs offshore surf cells
+                # ~0.3 m lower. Blank the pre-surge steps when that cell is still dry.
+                if not (d / "sfincs_his.nc").exists():
+                    continue
+                his = xr.open_dataset(d / "sfincs_his.nc")
+                snames = [s.decode().strip() if isinstance(s, (bytes, np.bytes_)) else str(s)
+                          for s in his["station_name"].values]
+                if g["his"] not in snames:
+                    continue
+                si = snames.index(g["his"])
+                zs = his["point_zs"].isel(stations=si).values
+                zb = float(his["point_zb"].isel(stations=si).values)
+                mt = pd.to_datetime(his["time"].values)
+                series = np.where(zs - zb > 0.05, zs, np.nan)  # draw only where wet
+                tag = f"peak {np.nanmax(zs):.2f} m"
+            ax.plot(mt, series, lw=1.5, alpha=0.9, label=f"{label}   ({tag})")
 
-        if key == "shrewsbury":
-            ax.plot([ot[-1] + pd.Timedelta("21h")], [SHREWSBURY_CREST_M], marker="*",
+        if g.get("crest") is not None:
+            ax.plot([ot[-1] + pd.Timedelta("21h")], [g["crest"]], marker="*",
                     ms=16, color="crimson", zorder=6, ls="none",
-                    label=f"surveyed crest {SHREWSBURY_CREST_M:.2f} m (no hydrograph)")
+                    label=f"surveyed crest {g['crest']:.2f} m (no hydrograph)")
 
-        ax.set_title(f"{g['label']}   —   observed tide rises "
-                     f"{o_sig['frac_rising']:.2f} of the time", fontsize=10)
+        if is_tide:
+            title = (f"{g['label']}   —   observed tide rises "
+                     f"{o_sig['frac_rising']:.2f} of the time")
+        else:
+            title = f"{g['label']}   —   observed peak {np.nanmax(ow):.2f} m"
+        ax.set_title(title, fontsize=10)
+        if g.get("note"):
+            ax.text(0.015, 0.05, g["note"], transform=ax.transAxes, fontsize=7.5,
+                    style="italic", color="0.4", va="bottom", zorder=6)
         ax.set_ylabel("water level [m NAVD88]")
         ax.grid(alpha=0.3)
         ax.legend(fontsize=8, loc="upper left", ncol=1)
 
     axes[-1].set_xlabel("2012")
-    fig.suptitle("Gauge verification — read the PRE-STORM TIDE (left of the dotted line).\n"
+    fig.suptitle("Gauge verification — surge / forcing delivery (top) and interior "
+                 "pre-storm tide (bottom).\n"
                  "A tide floods and ebbs; a drained or dammed basin only ebbs.",
                  fontsize=11)
-    fig.tight_layout(rect=(0, 0, 1, 0.96))
+    fig.tight_layout(rect=(0, 0, 1, 0.97))
     return fig, axes
 
 
