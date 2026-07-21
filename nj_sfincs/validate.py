@@ -202,7 +202,7 @@ def _wet_channel_cells(model_dir: Path, lon: float, lat: float,
     return idx, r[idx], z[idx]
 
 
-def read_output(mod) -> None:
+def read_output(mod, lazy: bool = True) -> None:
     """Load sfincs_map.nc + sfincs_his.nc, tolerating BOTH SFINCS output conventions.
 
     ``hydromt_sfincs``' own ``output.read()`` does ``crs = ds["crs"].values`` on the map,
@@ -218,6 +218,17 @@ def read_output(mod) -> None:
     (Galibier), then a loose variable (Faber), then ``epsg`` in sfincs.inp as a backstop.
     Without this, every spatial metric (HWM, MOTF, floodmaps) silently excludes the
     Galibier runs.
+
+    ``lazy`` (default) opens the map instead of loading it. sfincs_map.nc is ~870 MB on
+    disk and ~2.2 GB in memory (12 face x time fields), but every caller here wants a
+    handful of slices — zsmax, one hm0 timestep, the his points. Eager loading cost
+    ~40 s per run cold, which a 4-run comparison paid four times before drawing
+    anything. Lazy is ~2 s and defers the decompression to the slices actually taken;
+    the netCDF chunking is (1, nface), so a timestep slice is one chunk.
+
+    Pass ``lazy=False`` to force the old eager read — the one case that needs it is
+    reading a run that is about to be OVERWRITTEN, since a lazy handle keeps reading
+    the deleted inode (or worse, a half-rewritten file) after SFINCS restarts.
     """
     root = Path(mod.root.path)
     mod.config.read()
@@ -227,7 +238,7 @@ def read_output(mod) -> None:
 
     fn_map = root / "sfincs_map.nc"
     if fn_map.is_file():
-        ds = xu.load_dataset(fn_map)
+        ds = xu.open_dataset(fn_map) if lazy else xu.load_dataset(fn_map)
         ds = ds.set_coords(["mesh2d_node_x", "mesh2d_node_y"])
         crs = ds.grid.crs                                  # Galibier: xugrid parsed it
         if crs is None:
@@ -252,34 +263,45 @@ def _inp_value(inp: Path, key: str) -> str:
     raise KeyError(f"{key!r} not found in {inp}")
 
 
-def load_floodmap(model_dir: Path):
+def load_floodmap(model_dir: Path, force: bool = False):
     """Open the run read-only and downscale zsmax onto the L3 subgrid DEM.
 
     Returns ``(mod, da_hmax, da_dep)`` — the model handle plus the north-up
     depth-max and subgrid-DEM rasters the spatial metrics sample.
+
+    The downscale is CACHED as ``floodmap_hmax_lev3.tif`` in the run dir and reused
+    when it is newer than the run's sfincs_map.nc. It costs ~80 s, and re-running it
+    on an unchanged run reproduces the file byte for byte — so the viz notebook was
+    paying a minute and a half per open to arrive back at what was already on disk.
+    Staleness is the mtime comparison, not existence: a re-run of the same experiment
+    rewrites sfincs_map.nc and must invalidate the tif. ``force=True`` rebuilds
+    regardless (use it if a cache is suspect).
     """
     model_dir = Path(model_dir).resolve()
     mod = SfincsModel(str(model_dir), data_libs=[str(DATA / "data_catalog.yml")], mode="r")
     read_output(mod)
 
-    da_zsmax = mod.output.data["zsmax"].max(dim="timemax")
     depfile = str(model_dir / "subgrid" / "dep_subgrid_lev3.tif")
     floodmap_fn = str(model_dir / "floodmap_hmax_lev3.tif")
 
-    # Downscale to a temp file and os.replace() into position, so the cache is either
-    # absent or COMPLETE -- never a stub. This takes minutes; if it is interrupted
-    # (Ctrl-C, kill, quota) a direct write leaves a short raster that reads back with
-    # no error and scores the model bone DRY: CSI 0.00, every HWM "dry". That is a
-    # broken file wearing the costume of a dramatic physics result, and it cost us an
-    # afternoon on 2026-07-16. os.replace is atomic within a filesystem.
-    #
-    # The temp name MUST keep the .tif extension: downscale_floodmap calls
-    # build_overviews, which asserts the extension and dies on a .tmp suffix.
-    tmp_fn = str(model_dir / ".floodmap_hmax_lev3.partial.tif")
-    utils.downscale_floodmap(
-        zsmax=da_zsmax, dep=depfile, hmin=0.05, floodmap_fn=tmp_fn, nrmax=1000
-    )
-    os.replace(tmp_fn, floodmap_fn)
+    fm, mp = Path(floodmap_fn), model_dir / "sfincs_map.nc"
+    fresh = fm.is_file() and (not mp.is_file() or fm.stat().st_mtime >= mp.stat().st_mtime)
+    if force or not fresh:
+        da_zsmax = mod.output.data["zsmax"].max(dim="timemax")
+        # Downscale to a temp file and os.replace() into position, so the cache is either
+        # absent or COMPLETE -- never a stub. This takes minutes; if it is interrupted
+        # (Ctrl-C, kill, quota) a direct write leaves a short raster that reads back with
+        # no error and scores the model bone DRY: CSI 0.00, every HWM "dry". That is a
+        # broken file wearing the costume of a dramatic physics result, and it cost us an
+        # afternoon on 2026-07-16. os.replace is atomic within a filesystem.
+        #
+        # The temp name MUST keep the .tif extension: downscale_floodmap calls
+        # build_overviews, which asserts the extension and dies on a .tmp suffix.
+        tmp_fn = str(model_dir / ".floodmap_hmax_lev3.partial.tif")
+        utils.downscale_floodmap(
+            zsmax=da_zsmax, dep=depfile, hmin=0.05, floodmap_fn=tmp_fn, nrmax=1000
+        )
+        os.replace(tmp_fn, floodmap_fn)
     da_hmax = rioxarray.open_rasterio(floodmap_fn, masked=True).squeeze(drop=True)
     da_dep = rioxarray.open_rasterio(depfile, masked=True).squeeze(drop=True)
     da_hmax = da_hmax.rio.reproject(da_hmax.rio.crs)   # de-rotate to north-up
