@@ -78,14 +78,26 @@ class BaseConfig:
 
     # Reproducibility: if set to a pre-built static-mesh dir, build_static COPIES
     # it instead of rebuilding the quadtree (which is environment-sensitive — two
-    # builds can differ by ~18 cells → CSI ±0.04). Frozen 2026-07-03 via
-    # scripts/freeze_mesh.py (547,267-cell deterministic grid) so the harness AND
-    # notebook share one identical mesh. Set to None to build fresh each time.
-    # Override the dir via NJ_FROZEN_MESH (relative to ROOT or absolute) to A/B an
-    # alternate mesh, e.g. NJ_FROZEN_MESH=data/frozen_mesh_L4 for the narrows-L4 run.
+    # builds can differ by ~18 cells → CSI ±0.04). Set to None to build fresh each time.
+    # Override via NJ_FROZEN_MESH (relative to ROOT or absolute) to A/B an alternate
+    # mesh, e.g. NJ_FROZEN_MESH=data/frozen_mesh_L4 for the narrows-L4 run.
+    #
+    # ⚠️ DEFAULT CHANGED 2026-07-21: `data/frozen_mesh` → `data/frozen_mesh_sealed`.
+    # The old default is the PRE-REBUILD mesh (547,267 cells) — the one whose region
+    # polygon chops the Navesink mid-channel, so hydromt hangs a free-outflow BC on a
+    # 5 m-deep tidal cross-section and the estuary drains 92.5% of its inflow, and whose
+    # Shark River Inlet is dammed shut. The sealed mesh (547,408 cells, 1,635 boundary
+    # edges vs the leaking 1,676) is what the adopted premier stands on.
+    #
+    # This default was a loaded gun: `_template_sealed` was only sealed because
+    # scripts/setup_sealed_premier.py sets NJ_FROZEN_MESH explicitly, so ANY build that
+    # forgot the env var — a notebook run, a plain build_template — silently produced a
+    # leaking domain. That is how `model/` (built 2026-07-03) ended up leaking, and it is
+    # the same class of failure that voided the 2026-07-20 phase-lag A/B.
+    # See nj_sfincs/premier.py, which now asserts the resulting domain either way.
     frozen_mesh: Path | None = (
         (ROOT / os.environ["NJ_FROZEN_MESH"]) if os.environ.get("NJ_FROZEN_MESH")
-        else DATA / "frozen_mesh"
+        else DATA / "frozen_mesh_sealed"
     )
 
     # ── Grid ─────────────────────────────────────────────────────────────────
@@ -261,18 +273,28 @@ EXPERIMENTS: dict[str, Experiment] = {
         "(noaa_sandy_nj_shblend). Targets the +18 min coastal baseline.",
         waterlevel_geodataset="noaa_sandy_nj_shblend",
     ),
+    # ⛔ RETIRED 2026-07-21. GTSM's TIDE is ~34% under-amplitude everywhere in this region
+    # (x0.66 vs NOAA harmonics at 6 stations spanning open coast, harbour and a resonant
+    # sound), so its interior peaks are an amplitude artifact and say nothing about phase.
+    # Kept only so the historical arm remains reproducible. Superseded by phaselag_composite.
     "phaselag_gtsm": Experiment(
         "phaselag_gtsm",
         WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
-        "GTSM-ERA5 global tide+surge on the current boundary (gtsm_sandy) — the "
-        "advisor's alternative source. Quantifies its phase AND its ~1 m crest gap.",
+        "RETIRED — GTSM-ERA5 global tide+surge (gtsm_sandy). Tide is ~34% low across "
+        "the whole region; do not read its crest as a result.",
         waterlevel_geodataset="gtsm_sandy",
     ),
+    # ⭐ The adopted forcing route: tide/surge decomposition (Wahl/Gloucester City NJ,
+    # Orton/Hoboken). Sandy Hook returns as a support point with its OWN harmonic tide —
+    # predictions don't need the gauge to have survived — and borrows the Battery's NTR
+    # (corr 0.996, zero lag) across the mid-storm gap. Validated vs SH 6-min obs:
+    # RMSE 0.103 m and pre-storm phase error 0 min, against 0.147 m / 24 min for the
+    # Battery-anchored baseline. No extrapolation anywhere.
     "phaselag_composite": Experiment(
         "phaselag_composite",
         WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
-        "Best offshore tide phase + NOAA surge residual (noaa_sandy_composite). "
-        "Only build after the source_phase_lag reference shows a phase win.",
+        "NOAA harmonic tide + non-tidal residual (noaa_sandy_composite). Fixes the "
+        "boundary tide phase without touching the surge field — one variable changed.",
         waterlevel_geodataset="noaa_sandy_composite",
     ),
 }

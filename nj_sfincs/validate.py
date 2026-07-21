@@ -90,10 +90,41 @@ def classify_hwm_basin(x: np.ndarray, y: np.ndarray) -> np.ndarray:
     return basin
 
 
-def _prestorm_window(map_times: np.ndarray, hours: float = 24.0):
-    """Clean tidal window = first ``hours`` of the run (before the surge ramp)."""
-    t0 = map_times.min()
-    return t0, t0 + np.timedelta64(int(hours * 3600), "s")
+# Hours of run time to discard before a "clean tidal window" starts. The model does not
+# begin on the observed tide: it starts from a cold state and takes several hours to spin
+# up, and that settling is a monotonic drift, not an oscillation.
+#
+# WHY THIS EXISTS (2026-07-21). This window used to start at tstart, so it opened during
+# spin-up and — for the Sandy window — closed exactly on a rising tide, with the window's
+# own maximum sitting on its right-hand edge. Cross-correlating that against a clean
+# observed tide is badly conditioned, and it inflated EVERY phase lag by ~13 min: the
+# premier scored 30.0 min through gauge_phase_lag when the careful hand-measurement of
+# 2026-07-20 had said +18. Discarding the first 12 h recovers 17.2 — i.e. the corrected
+# metric reproduces the original diagnosis. Sensitivity (Sandy Hook, min):
+#
+#     window        battery  shblend  gtsm  PREMIER
+#     +0h/24h          30.7     21.7  27.9     30.0   <- old behaviour
+#     +6h/24h          16.9      8.3  21.1     17.2
+#     +12h/24h         17.4      8.1   6.4     17.6   <- stable, and stable in length too
+#
+# 12 h clears spin-up while still ending before the surge ramp dominates. Phase numbers
+# recorded before this date came from the +0h window and read ~13 min high — re-measure
+# rather than comparing across the change.
+SPINUP_SKIP_H = 12.0
+
+
+def _prestorm_window(map_times: np.ndarray, hours: float = 24.0,
+                     skip_hours: float = SPINUP_SKIP_H):
+    """Clean tidal window: ``hours`` long, opening ``skip_hours`` after the run starts.
+
+    Skipping the spin-up is not cosmetic — see SPINUP_SKIP_H. If the run is too short to
+    afford the skip, fall back to starting at tstart rather than returning an empty window.
+    """
+    t0, tend = map_times.min(), map_times.max()
+    start = t0 + np.timedelta64(int(skip_hours * 3600), "s")
+    if start + np.timedelta64(int(hours * 3600), "s") > tend:
+        start = t0  # short/smoke run — take what we can get
+    return start, start + np.timedelta64(int(hours * 3600), "s")
 
 
 # A tide RISES about half the time. A drain never does. This is the discriminator:
