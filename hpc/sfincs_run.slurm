@@ -6,7 +6,10 @@
 #SBATCH -p main-redhat
 #SBATCH -c 64
 #SBATCH --mem=64G
-#SBATCH -t 01:00:00
+# Wave-enabled (SnapWave) solves of the 3-day Sandy window take 1:40-2:05 wall; the old
+# 1 h limit silently TIMEOUTed the 2026-07-20 phaselag runs at ~80% of the window. There is
+# no restart file (trstout is off), so a timeout loses the whole solve. 3 h = ~1.5x worst case.
+#SBATCH -t 03:00:00
 #SBATCH -J sfincs
 #SBATCH -o logs/sfincs_%j.out
 #SBATCH -e logs/sfincs_%j.out

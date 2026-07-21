@@ -414,6 +414,215 @@ def tidal_range_metric(model_dir: Path, data_dir: Path = DATA,
     return out
 
 
+# ── Tidal PHASE lag (2026-07-20) ──────────────────────────────────────────────
+# The amplitude over-damping (tidal_range_metric) has a temporal twin: the modeled
+# pre-storm tide peaks LATE (Sandy Hook +18 min, Shrewsbury +38 — advisor-noticed).
+# These reproduce that ad-hoc diagnosis as a reusable metric: cross-correlate the
+# DETRENDED (surge/spin-up removed) pre-storm model and observed series and read the
+# lag that maximises correlation. Sign convention: POSITIVE = model peaks LATER.
+PHASE_MAX_LAG_MIN = 120.0  # search ±2 h; the real lags are 15–40 min
+
+
+def _uniform_series(times: np.ndarray, values: np.ndarray,
+                    t0: np.datetime64, t1: np.datetime64, dt_s: float) -> np.ndarray | None:
+    """Clip to [t0, t1], drop NaN, linearly resample onto a uniform dt_s grid.
+
+    Returns the resampled values (finite) or None if there is nothing usable. The
+    common grid lets two series of different native cadence (his 10-min vs hourly
+    obs) be cross-correlated at one fine resolution.
+    """
+    t = np.asarray(times)
+    v = np.asarray(values, float).ravel()
+    if t.shape[0] != v.shape[0]:
+        return None
+    ok = np.isfinite(v) & (t >= t0) & (t <= t1)
+    if ok.sum() < 4:
+        return None
+    ts = (t[ok] - t0) / np.timedelta64(1, "s")
+    order = np.argsort(ts)
+    ts, vs = ts[order], v[ok][order]
+    grid = np.arange(0.0, float((t1 - t0) / np.timedelta64(1, "s")) + dt_s, dt_s)
+    grid = grid[(grid >= ts.min()) & (grid <= ts.max())]
+    if grid.size < 6:
+        return None
+    return np.interp(grid, ts, vs)
+
+
+def _xcorr_lag_minutes(model: np.ndarray, obs: np.ndarray, dt_s: float,
+                       max_lag_min: float = PHASE_MAX_LAG_MIN) -> float:
+    """Lag (minutes, + = model later than obs) maximising detrended cross-correlation.
+
+    Both series are linearly detrended (removes the surge ramp + mean, same idea as
+    ``_tidal_signal``) and normalised, then correlated over integer sample shifts.
+    A parabolic fit around the peak refines the lag to sub-sample precision.
+    """
+    n = min(model.size, obs.size)
+    if n < 6:
+        return float("nan")
+    a = np.asarray(model[:n], float)
+    b = np.asarray(obs[:n], float)
+    tt = np.arange(n, dtype=float)
+    a = a - np.polyval(np.polyfit(tt, a, 1), tt)
+    b = b - np.polyval(np.polyfit(tt, b, 1), tt)
+    if a.std() < 1e-6 or b.std() < 1e-6:
+        return float("nan")
+    kmax = int(min(max_lag_min * 60.0 / dt_s, n - 3))
+    if kmax < 1:
+        return float("nan")
+    min_overlap = max(6, n // 2)
+    lags = np.arange(-kmax, kmax + 1)
+    corr = np.full(lags.size, -np.inf)
+    for i, k in enumerate(lags):
+        # shift OBS later by k samples and overlap with model: if obs must move
+        # +k to line up with the model, the model is k samples LATE → +lag.
+        if k >= 0:
+            aa, bb = a[k:], b[: n - k]
+        else:
+            aa, bb = a[: n + k], b[-k:]
+        if aa.size < min_overlap:
+            continue
+        # normalised cross-correlation on the overlap (each window demeaned +
+        # scaled by its own norm) — removes the shrinking-window / residual-trend
+        # bias that a raw dot product carries.
+        aa = aa - aa.mean()
+        bb = bb - bb.mean()
+        denom = np.sqrt((aa * aa).sum() * (bb * bb).sum())
+        if denom > 0:
+            corr[i] = float((aa * bb).sum() / denom)
+    j = int(np.argmax(corr))
+    lag_samples = float(lags[j])
+    # parabolic sub-sample refinement around the discrete peak
+    if 0 < j < lags.size - 1:
+        y0, y1, y2 = corr[j - 1], corr[j], corr[j + 1]
+        denom = y0 - 2 * y1 + y2
+        if abs(denom) > 1e-12:
+            lag_samples += 0.5 * (y0 - y2) / denom
+    return lag_samples * dt_s / 60.0
+
+
+def _his_series(mod, name_substr: str):
+    """(times, values) for the his obs point whose station_name contains name_substr."""
+    point_zs = mod.output.data["point_zs"]
+    names = [n.decode() if isinstance(n, bytes) else str(n)
+             for n in point_zs["station_name"].values]
+    i = next((k for k, n in enumerate(names) if name_substr in n), None)
+    if i is None:
+        return None
+    s = point_zs.isel(stations=i)
+    return s["time"].values, s.values
+
+
+def gauge_phase_lag(mod, model_dir: Path, data_dir: Path = DATA,
+                    hours: float = 24.0) -> dict:
+    """Pre-storm tidal phase lag (minutes, + = model late) per gauge.
+
+    Reproduces the 2026-07-20 cross-correlation diagnosis. Source per gauge follows
+    what actually carries a usable tide (see [[project_tidal_phase_lag]]):
+
+    * ``sandy_hook``  — his 10-min (obs point is wet) vs NOAA 8531680 (validation nc).
+    * ``shrewsbury``  — his 10-min at ``usgs_tidal_sea_bright`` (the 21 m channel nudge
+      worked) vs USGS 1407600.
+    * ``shark_river`` — his obs point is a dry +1.79 m bank, so the MAP hourly series at
+      wet channel cells vs USGS 1407770 (coarser lag resolution, as in the diagnosis).
+    """
+    model_dir = Path(model_dir)
+    dt_s = 600.0  # common resample grid (his cadence); coarser than obs is fine
+    out: dict = {}
+
+    val = xr.open_dataset(str(Path(data_dir) / "gtsm" / "noaa_sandy_validation.nc"))
+    usgs = xr.open_dataset(str(Path(data_dir) / "gtsm" / "usgs_sandy_tidal_nj.nc"))
+
+    # window from the map (same basis as tidal_range_metric)
+    mp = xr.open_dataset(model_dir / "sfincs_map.nc")
+    t0, t1 = _prestorm_window(mp["time"].values, hours)
+
+    # (a) his-based coastal + Shrewsbury gauges
+    his_gauges = {
+        "sandy_hook": (_his_series(mod, "sandy_hook"),
+                       (val["waterlevel"].sel(stations=8531680)["time"].values,
+                        val["waterlevel"].sel(stations=8531680).values)),
+        "shrewsbury": (_his_series(mod, "usgs_tidal_sea_bright"),
+                       (usgs["waterlevel"].sel(stations=1407600)["time"].values,
+                        usgs["waterlevel"].sel(stations=1407600).values)),
+    }
+    for g, (mser, oser) in his_gauges.items():
+        lag = float("nan")
+        if mser is not None:
+            m = _uniform_series(mser[0], mser[1], t0, t1, dt_s)
+            o = _uniform_series(oser[0], oser[1], t0, t1, dt_s)
+            if m is not None and o is not None:
+                lag = _xcorr_lag_minutes(m, o, dt_s)
+        out[f"phase_lag_{g}_min"] = round(lag, 1)
+
+    # (b) Shark from the map at wet channel cells (dry his point)
+    lag = float("nan")
+    cells = _wet_channel_cells(model_dir, -74.02610, 40.18560)
+    if cells is not None:
+        idx, _, _ = cells
+        tsel = (mp["time"].values >= t0) & (mp["time"].values <= t1)
+        zsw = mp["zs"].isel(time=tsel, nmesh2d_face=idx).values
+        full = np.isfinite(zsw).all(axis=0)
+        if full.any() and tsel.sum() >= 6:
+            mser = np.median(zsw[:, full], axis=1)
+            if _tidal_signal(mser)["is_tidal"]:
+                mtimes = mp["time"].values[tsel]
+                m = _uniform_series(mtimes, mser, t0, t1, 3600.0)
+                o = _uniform_series(usgs["waterlevel"].sel(stations=1407770)["time"].values,
+                                    usgs["waterlevel"].sel(stations=1407770).values,
+                                    t0, t1, 3600.0)
+                if m is not None and o is not None:
+                    lag = _xcorr_lag_minutes(m, o, 3600.0)
+    out["phase_lag_shark_river_min"] = round(lag, 1)
+    return out
+
+
+def _catalog_uri(key: str, data_dir: Path = DATA) -> Path | None:
+    """Resolve a data-catalog geodataset key to its .nc path (yaml lookup)."""
+    import yaml
+    cat = yaml.safe_load((Path(data_dir) / "data_catalog.yml").read_text())
+    entry = (cat or {}).get(key)
+    if not entry or "uri" not in entry:
+        return None
+    return Path(data_dir) / entry["uri"]
+
+
+def source_phase_lag(geodataset: str, ref_lonlat: tuple[float, float] = (-74.0091, 40.4669),
+                     data_dir: Path = DATA, hours: float = 24.0) -> float:
+    """Phase lag (minutes, + = source later) of a FORCING SOURCE vs observed tide.
+
+    No SFINCS run needed — this is the cheap offshore-phase ranking that lets the
+    tide-only references (GTSM-tide, FES/TPXO) be compared before deciding what to
+    run. The source's station nearest ``ref_lonlat`` (default the Sandy Hook gauge)
+    is compared against the real Sandy Hook observed tide (NOAA 8531680) over the
+    pre-storm window.
+    """
+    uri = _catalog_uri(geodataset, data_dir)
+    if uri is None or not uri.exists():
+        return float("nan")
+    ds = xr.open_dataset(str(uri))
+    if "waterlevel" not in ds:
+        return float("nan")
+    wl = ds["waterlevel"]
+    # pick the station/point nearest the reference location
+    if "stations" in wl.dims and "lon" in ds and "lat" in ds:
+        d = np.hypot(ds["lon"].values - ref_lonlat[0], ds["lat"].values - ref_lonlat[1])
+        wl = wl.isel(stations=int(np.argmin(d)))
+    elif "stations" in wl.dims:
+        wl = wl.isel(stations=0)
+
+    obs = xr.open_dataset(str(Path(data_dir) / "gtsm" / "noaa_sandy_validation.nc"))
+    obs_sh = obs["waterlevel"].sel(stations=8531680)
+
+    t0 = np.datetime64(pd.Timestamp("2012-10-28"))
+    t1 = t0 + np.timedelta64(int(hours * 3600), "s")
+    dt_s = 600.0
+    a = _uniform_series(wl["time"].values, wl.values, t0, t1, dt_s)
+    b = _uniform_series(obs_sh["time"].values, obs_sh.values, t0, t1, dt_s)
+    if a is None or b is None:
+        return float("nan")
+    return round(_xcorr_lag_minutes(a, b, dt_s), 1)
+
+
 def hwm_metrics(da_hmax, da_dep, data_dir: Path = DATA) -> dict:
     """USGS High Water Mark residuals: RMSE/bias/within-0.5 m (headline q<=2).
 
@@ -605,6 +814,7 @@ def evaluate(model_dir: Path, data_dir: Path = DATA,
         (gauge_peak_error, (mod, data_dir)),
         (shrewsbury_gauge_peak, (mod,)),
         (tidal_range_metric, (model_dir, data_dir)),
+        (gauge_phase_lag, (mod, model_dir, data_dir)),
         (hwm_metrics, (da_hmax, da_dep, data_dir)),
         (motf_metrics, (da_hmax, da_dep, data_dir)),
         (sandy_hook_bay_hm0, (mod,)),

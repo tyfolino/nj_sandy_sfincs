@@ -82,16 +82,31 @@ def run_sfincs(model_root, sif: str | None = None):
     raise RuntimeError("Neither 'singularity' nor 'docker' on PATH.")
 
 
-def submit_slurm(model_dir, slurm_script: Path | None = None) -> str | None:
+def submit_slurm(model_dir, sif: str | None = None,
+                 slurm_script: Path | None = None) -> str | None:
     """Submit one SFINCS solve via ``sbatch hpc/sfincs_run.slurm <model_dir>``.
 
     The batch script runs relative to the submit dir (= repo root), so we sbatch
     from ROOT and pass the model dir as a path relative to it. Returns the job id.
+
+    ``sif`` picks the engine and is passed through as SFINCS_SIF. Pass it
+    explicitly (``base.container_sif``) — if it is left to the batch script's own
+    fallback the SLURM path silently runs a DIFFERENT engine than the local path,
+    which is how the 2026-07-20 phaselag runs ended up on Galibier (sfincs-cpu.sif)
+    instead of the sealed premier's Faber (sfincs-desktop.sif).
     """
     if slurm_script is None:
         slurm_script = ROOT / "hpc" / "sfincs_run.slurm"
     if not shutil.which("sbatch"):
         raise RuntimeError("'sbatch' not on PATH — not on a SLURM cluster?")
+
+    env = dict(os.environ)
+    if sif is not None:
+        sif_abs = Path(sif).resolve()
+        if not sif_abs.exists():
+            raise FileNotFoundError(f"container image not found: {sif_abs}")
+        env["SFINCS_SIF"] = str(sif_abs)
+    print(f"[slurm] engine = {Path(env.get('SFINCS_SIF', 'batch-script default')).name}")
 
     model_abs = Path(model_dir).resolve()
     try:
@@ -101,7 +116,7 @@ def submit_slurm(model_dir, slurm_script: Path | None = None) -> str | None:
 
     proc = subprocess.run(
         ["sbatch", str(slurm_script), model_arg],
-        cwd=str(ROOT), capture_output=True, text=True,
+        cwd=str(ROOT), capture_output=True, text=True, env=env,
     )
     print(proc.stdout.strip() or proc.stderr.strip())
     if proc.returncode != 0:

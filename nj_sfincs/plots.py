@@ -749,7 +749,24 @@ def plot_gauge_verification(runs, root=None, data_dir=DATA, hours=None):
     import matplotlib.pyplot as plt
     import pandas as pd
 
-    from .validate import _tidal_signal, _wet_channel_cells
+    from .validate import (
+        _tidal_signal, _uniform_series, _wet_channel_cells, _xcorr_lag_minutes,
+    )
+
+    def _phase_tag(mt, series, ot, ow, t_die):
+        """Pre-storm phase lag (min, + = model later) as a label suffix, or ''."""
+        try:
+            t0 = np.datetime64(pd.Timestamp(ot[0]))
+            tw = min(np.datetime64(pd.Timestamp(t_die)),
+                     t0 + np.timedelta64(24 * 3600, "s"))
+            ms = _uniform_series(np.asarray(mt, "datetime64[ns]"), series, t0, tw, 600.0)
+            oss = _uniform_series(np.asarray(ot, "datetime64[ns]"), ow, t0, tw, 600.0)
+            if ms is None or oss is None:
+                return ""
+            lag = _xcorr_lag_minutes(ms, oss, 600.0)
+            return f", Δφ {lag:+.0f} min" if np.isfinite(lag) else ""
+        except Exception:
+            return ""
 
     root = Path(root) if root else ROOT / "experiments"
     if not isinstance(runs, dict):
@@ -820,6 +837,7 @@ def plot_gauge_verification(runs, root=None, data_dir=DATA, hours=None):
                 mt = pd.to_datetime(his["time"].values)
                 series = np.where(zs - zb > 0.05, zs, np.nan)  # draw only where wet
                 tag = f"peak {np.nanmax(zs):.2f} m"
+            tag += _phase_tag(mt, series, ot, ow, t_die)
             ax.plot(mt, series, lw=1.5, alpha=0.9, label=f"{label}   ({tag})")
 
         if g.get("crest") is not None:
@@ -847,6 +865,44 @@ def plot_gauge_verification(runs, root=None, data_dir=DATA, hours=None):
                  fontsize=11)
     fig.tight_layout(rect=(0, 0, 1, 0.97))
     return fig, axes
+
+
+def plot_source_phase(sources, ref_lonlat=(-74.0091, 40.4669), data_dir=DATA):
+    """Offshore tidal-phase lag of each FORCING SOURCE vs the observed Sandy Hook tide.
+
+    The cheap, no-run headline for the forcing A/B: each source's series nearest the
+    reference point (default the Sandy Hook gauge, i.e. the northern boundary anchor)
+    is cross-correlated against the real NOAA 8531680 pre-storm tide. POSITIVE bars =
+    that source is phase-LATE at the coast (it will import a late tide, like the
+    harbor-phase Battery); a source near 0 delivers the observed offshore phase.
+
+    ``sources``: {label: data_catalog_geodataset_key}.
+    """
+    import matplotlib.pyplot as plt
+
+    from .validate import source_phase_lag
+
+    labels = list(sources)
+    lags = [source_phase_lag(sources[k], ref_lonlat, data_dir) for k in labels]
+    y = np.arange(len(labels))
+    colors = ["0.6" if not np.isfinite(v) else ("#c0392b" if abs(v) >= 8 else "#2e7d32")
+              for v in lags]
+
+    fig, ax = plt.subplots(figsize=(9, 0.7 * len(labels) + 1.6))
+    ax.barh(y, [0 if not np.isfinite(v) else v for v in lags], color=colors, alpha=0.85)
+    ax.axvline(0, color="k", lw=1)
+    ax.set_yticks(y)
+    ax.set_yticklabels(labels)
+    ax.invert_yaxis()
+    ax.set_xlabel("phase lag vs observed Sandy Hook tide  [min]   (+ = source late)")
+    ax.set_title("Offshore tidal phase by forcing source (pre-storm, no SFINCS run)")
+    for yi, v in zip(y, lags):
+        txt = "n/a" if not np.isfinite(v) else f"{v:+.0f} min"
+        ax.text(v if np.isfinite(v) else 0, yi, "  " + txt, va="center",
+                ha="left" if (np.isfinite(v) and v >= 0) else "right", fontsize=9)
+    ax.grid(axis="x", alpha=0.3)
+    fig.tight_layout()
+    return fig, ax
 
 
 def plot_motf_panels(runs, root=None, data_dir=DATA, ncol=2):

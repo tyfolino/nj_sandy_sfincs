@@ -13,7 +13,8 @@ dependencies:
   - xarray
   - netcdf4
   - pyproj
-  - cdsapi           # ERA5 winds/pressure + wave field (Copernicus CDS)
+  - cdsapi           # ERA5 winds/pressure + wave field; GTSM tide+surge (Copernicus CDS)
+  - pyTMD            # FES2014/TPXO tide prediction (phase reference; needs AVISO grids)
   - s3fs             # NOAA AORC rainfall (AWS Open Data, Zarr)
   - requests         # USGS / NOAA / NDBC REST downloads
   - pip

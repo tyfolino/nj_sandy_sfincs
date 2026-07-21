@@ -161,11 +161,23 @@ class WaveConfig:
 
 @dataclass(frozen=True)
 class Experiment:
-    """A named experiment = a label + the wave knobs to apply."""
+    """A named experiment = a label + the wave knobs to apply.
+
+    ``waterlevel_geodataset`` optionally OVERRIDES the base water-level forcing
+    source for this experiment only (default ``None`` = inherit ``BaseConfig``'s
+    Battery-anchored ``noaa_sandy_nj``). The override is applied on the copied
+    template in ``run_experiments.prepare_experiment`` by re-running
+    ``sf.water_level.create(..., merge=False)`` — everything else (leak-fixed
+    mask, subgrid, waves) is identical, so a set of experiments differing only in
+    this field is a clean forcing A/B. Faber vs Galibier is NOT a knob here: it is
+    the SFINCS container (``sfincs-desktop.sif`` = Faber, the default
+    ``BaseConfig.container_sif``), so every run below is Faber.
+    """
 
     name: str
     waves: WaveConfig
     description: str = ""
+    waterlevel_geodataset: str | None = None
 
 
 # ── The experiment library the runner sweeps over ────────────────────────────
@@ -228,6 +240,40 @@ EXPERIMENTS: dict[str, Experiment] = {
         ),
         "IG + wind + an ocean-side wavemaker injecting IG energy along the "
         "open-coast line (kept ocean-side; a wavemaker inside the bay over-forces).",
+    ),
+    # ── Boundary re-phasing A/B (2026-07-20) ─────────────────────────────────
+    # The modeled pre-storm tide peaks late (Sandy Hook +18 min) because the
+    # north is interpolated from the harbor-phase Battery. These share the sealed
+    # premier's wave knobs (== snapwave_tuned: Faber SIF + wind waves + Tim's
+    # physics) and differ ONLY in the water-level forcing source, so gauge phase
+    # lag is compared on an otherwise-identical model. See plan / project memory.
+    "phaselag_battery": Experiment(
+        "phaselag_battery",
+        WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
+        "Baseline arm: premier wave knobs, default NOAA Battery-anchored forcing "
+        "(noaa_sandy_nj). The +18 min-late reference to beat.",
+        waterlevel_geodataset=None,
+    ),
+    "phaselag_shblend": Experiment(
+        "phaselag_shblend",
+        WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
+        "Sandy Hook tidal-window blend: real SH tide → Battery surge crest "
+        "(noaa_sandy_nj_shblend). Targets the +18 min coastal baseline.",
+        waterlevel_geodataset="noaa_sandy_nj_shblend",
+    ),
+    "phaselag_gtsm": Experiment(
+        "phaselag_gtsm",
+        WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
+        "GTSM-ERA5 global tide+surge on the current boundary (gtsm_sandy) — the "
+        "advisor's alternative source. Quantifies its phase AND its ~1 m crest gap.",
+        waterlevel_geodataset="gtsm_sandy",
+    ),
+    "phaselag_composite": Experiment(
+        "phaselag_composite",
+        WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
+        "Best offshore tide phase + NOAA surge residual (noaa_sandy_composite). "
+        "Only build after the source_phase_lag reference shows a phase win.",
+        waterlevel_geodataset="noaa_sandy_composite",
     ),
 }
 

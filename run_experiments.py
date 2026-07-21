@@ -29,6 +29,7 @@ from __future__ import annotations
 
 import argparse
 import gc
+import os
 import shutil
 import sys
 from datetime import datetime
@@ -38,13 +39,18 @@ import pandas as pd
 
 # Import the package first — its __init__ primes PROJ before hydromt_sfincs loads
 # (see nj_sfincs/__init__.py). Keep this ahead of the hydromt_sfincs import.
-from nj_sfincs import model, report, run, validate
+from nj_sfincs import model, premier, report, run, validate
 from nj_sfincs.config import EXPERIMENTS, ROOT, BaseConfig, WaveConfig, with_window
 
 from hydromt_sfincs import SfincsModel
 
 EXP_ROOT = ROOT / "experiments"
-TEMPLATE = EXP_ROOT / "_template"
+
+# THE domain every new experiment is staged from. See nj_sfincs/premier.py: this used to
+# be `_template` (the pre-rebuild, leaking-Navesink / dammed-Shark build), which silently
+# voided the whole 2026-07-20 phase-lag A/B. Overridable via NJ_TEMPLATE for deliberate
+# work on another domain — the lineage assert below still reports what you actually got.
+TEMPLATE = Path(os.environ.get("NJ_TEMPLATE", premier.SEALED_TEMPLATE))
 FLOODMAPS = EXP_ROOT / "floodmaps"
 METRICS_CSV = EXP_ROOT / "metrics.csv"
 
@@ -55,7 +61,21 @@ TEMPLATE_STAMP = TEMPLATE / ".window"
 
 
 def build_template(base: BaseConfig) -> None:
-    """Static build + base forcing → experiments/_template (written once)."""
+    """Static build + base forcing → the template dir (written once)."""
+    # GUARD: this function rmtree's its target. The sealed template is the base of the
+    # adopted premier and is hard-linked into every sealed_* run; it was built by
+    # scripts/setup_sealed_premier.py against NJ_FROZEN_MESH=data/frozen_mesh_sealed and
+    # is NOT reproducible from BaseConfig alone. Rebuilding it here would silently
+    # substitute a different domain under the premier's name — the exact class of failure
+    # premier.py exists to prevent.
+    if premier.is_sealed(TEMPLATE):
+        raise SystemExit(
+            f"refusing to rebuild {TEMPLATE}: it is the SEALED template "
+            f"({premier.SEALED}), the base of premier '{premier.PREMIER_NAME}'.\n"
+            "  Rebuild it with scripts/setup_sealed_premier.py (with "
+            f"NJ_FROZEN_MESH={premier.SEALED_FROZEN_MESH}), or point NJ_TEMPLATE "
+            "somewhere else to build a scratch template."
+        )
     print(f"[template] building static model + forcing in {TEMPLATE} ...")
     if TEMPLATE.exists():
         shutil.rmtree(TEMPLATE)
@@ -73,10 +93,29 @@ def build_template(base: BaseConfig) -> None:
 
 
 def template_matches(base: BaseConfig) -> bool:
-    """True iff a built template exists for exactly this run window."""
-    if not (TEMPLATE / "sfincs.inp").exists() or not TEMPLATE_STAMP.exists():
+    """True iff a built template exists for exactly this run window.
+
+    The .window stamp is written by build_template. The sealed template was NOT built
+    here and carries no stamp, so fall back to its own sfincs.inp — otherwise it reads as
+    stale and we would try to rebuild (and destroy) it on every invocation.
+    """
+    if not (TEMPLATE / "sfincs.inp").exists():
         return False
-    return TEMPLATE_STAMP.read_text().strip() == base.tstop.isoformat()
+    if TEMPLATE_STAMP.exists():
+        return TEMPLATE_STAMP.read_text().strip() == base.tstop.isoformat()
+    return _inp_tstop(TEMPLATE) == base.tstop
+
+
+def _inp_tstop(model_dir: Path) -> datetime | None:
+    """Parse ``tstop`` out of a sfincs.inp (``YYYYMMDD HHMMSS``)."""
+    for line in (model_dir / "sfincs.inp").read_text().splitlines():
+        key, _, value = line.partition("=")
+        if key.strip() == "tstop":
+            try:
+                return datetime.strptime(value.strip(), "%Y%m%d %H%M%S")
+            except ValueError:
+                return None
+    return None
 
 
 def prepare_experiment(name: str, base: BaseConfig) -> Path:
@@ -87,9 +126,22 @@ def prepare_experiment(name: str, base: BaseConfig) -> Path:
     if exp_dir.exists():
         shutil.rmtree(exp_dir)
     shutil.copytree(TEMPLATE, exp_dir)
+    # Fail here, before the solver burns an hour on the wrong planet.
+    premier.assert_sealed_domain(exp_dir, context=f"staging '{name}' from {TEMPLATE.name}")
 
     sf = SfincsModel(str(exp_dir), data_libs=base.data_libs, mode="r+")
     sf.read()
+    # Optional per-experiment water-level forcing swap (a forcing A/B). Re-runs
+    # water_level.create on the boundary cells the template already carved;
+    # merge=False REPLACES the template's Battery forcing (merge=True would append
+    # and leave the stale bnd in place). finalize() below loads + writes it.
+    if exp.waterlevel_geodataset is not None:
+        print(f"[{name}] overriding water-level forcing → {exp.waterlevel_geodataset}")
+        sf.water_level.create(
+            geodataset=exp.waterlevel_geodataset,
+            buffer=base.waterlevel_buffer,
+            merge=False,
+        )
     sw = model.add_waves(exp.waves, base, sf) if exp.waves.use_waves else None
     model.finalize(exp.waves, base, sf, exp_dir, sw)
     del sf
@@ -114,6 +166,15 @@ def collect_metrics(names: list[str]) -> pd.DataFrame:
         except Exception as e:  # noqa: BLE001
             print(f"[{name}] validation failed: {e}")
             rows[name] = {"error": str(e)}
+        # Stamp the domain onto every row. A metrics table whose numbers do not say which
+        # domain they came from is how the phase-lag A/B got compared against a premier it
+        # never shared a mesh with. Scoring legacy runs stays legal — silently is not.
+        sealed = premier.is_sealed(exp_dir)
+        rows[name]["domain"] = "sealed" if sealed else "NOT-SEALED"
+        if not sealed:
+            print(f"[{name}] *** WARNING: not on the sealed domain "
+                  f"({premier.domain_fingerprint(exp_dir)}) — not comparable to "
+                  f"'{premier.PREMIER_NAME}'. See nj_sfincs/premier.py.")
     return pd.DataFrame.from_dict(rows, orient="index")
 
 
@@ -173,7 +234,7 @@ def main(argv=None) -> int:
             print(f"[{name}] inputs written to {exp_dir} (solver skipped)")
             continue
         if args.slurm:
-            job = run.submit_slurm(exp_dir)
+            job = run.submit_slurm(exp_dir, sif=str(base.container_sif))
             submitted[name] = job
             print(f"[{name}] submitted SLURM job {job}")
         else:
