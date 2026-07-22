@@ -297,6 +297,23 @@ EXPERIMENTS: dict[str, Experiment] = {
         "boundary tide phase without touching the surge field — one variable changed.",
         waterlevel_geodataset="noaa_sandy_composite",
     ),
+    # ⭐ v2 (2026-07-22) — the arm that actually isolates PHASE from LEVEL.
+    # v1 above won on phase (SH 17.6 -> 7.8 min, Shrewsbury 36.9 -> 25.5) but lost on level
+    # (HWM bias +0.32 -> +0.73 m, within-0.5 m 74% -> 21%, SSS 2258 3.65 -> 4.01 m vs an
+    # observed 3.465) because it gave Sandy Hook the Battery's NTR UNSCALED — a surge peak
+    # amplified by the NY Harbor funnel, inserted into the Battery->AC baseline.
+    # v2 keeps the local harmonic TIDE (sharp phase gradients => must be local) but takes the
+    # NTR as the Battery->AC interpolant (spatially smooth => interpolate). The node then lies
+    # ON the existing surge line: 3.143 m vs the 3.146 m the premier's 2-node line already
+    # implied there (-0.004 m), where v1 sat at +0.243 m. Source phase still -3.3 min vs the
+    # premier's +21.1. No fitted parameter anywhere.
+    "phaselag_composite_v2": Experiment(
+        "phaselag_composite_v2",
+        WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
+        "Local harmonic tide + spatially interpolated NTR (noaa_sandy_composite_v2). "
+        "Re-phases the boundary tide while leaving the surge field as the premier had it.",
+        waterlevel_geodataset="noaa_sandy_composite_v2",
+    ),
 }
 
 

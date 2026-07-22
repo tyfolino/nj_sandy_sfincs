@@ -750,7 +750,8 @@ def plot_gauge_verification(runs, root=None, data_dir=DATA, hours=None):
     import pandas as pd
 
     from .validate import (
-        _tidal_signal, _uniform_series, _wet_channel_cells, _xcorr_lag_minutes,
+        _prestorm_window, _tidal_signal, _uniform_series, _wet_channel_cells,
+        _xcorr_lag_minutes,
     )
 
     def _phase_tag(mt, series, ot, ow, t_die):
@@ -796,6 +797,12 @@ def plot_gauge_verification(runs, root=None, data_dir=DATA, hours=None):
         ax.text(t_die, ax.get_ylim()[1], "  record ends", va="top", ha="left",
                 fontsize=8, color="0.35")
 
+        # OBSERVED tide statistic: deliberately the FULL clean record, NOT the model's
+        # spin-up-skipped window. The skip corrects a MODEL artifact (the run's initial
+        # drawdown); observations have no spin-up to remove, and frac-rising over a mere
+        # 24 h of 6-min data is noisy (Shark reads 0.39 windowed vs 0.47 on the record).
+        # 0.47 is the stable estimate and the one reports/shrewsbury_investigation.md
+        # cites. The asymmetry is intentional — do not "fix" it into agreement.
         o_sig = _tidal_signal(ow) if is_tide else None
         for label, name in runs.items():
             d = root / name
@@ -815,8 +822,15 @@ def plot_gauge_verification(runs, root=None, data_dir=DATA, hours=None):
                     continue
                 series = np.median(zsc[:, full], axis=1)
                 mt = pd.to_datetime(mp["time"].values)
-                # tide statistic over the same pre-storm window the gauge covers
-                pre = mt <= t_die
+                # Tide statistic over the SAME window validate.tidal_range_metric uses:
+                # a clean 24 h opening SPINUP_SKIP_H after tstart. Do NOT use
+                # `mt <= t_die` — that was the old behaviour (fixed 2026-07-22) and it
+                # spans the spin-up drawdown AND part of the storm ramp, which inflated
+                # frac-rising and made this figure disagree with the CSV/report
+                # (Shark read 0.51 here vs 0.458 there). The window must match or the
+                # legend is quoting a superseded methodology.
+                w0, w1 = _prestorm_window(mp["time"].values)
+                pre = (mp["time"].values >= w0) & (mp["time"].values <= w1)
                 sig = _tidal_signal(series[pre]) if pre.sum() > 3 else dict(frac_rising=np.nan)
                 tag = f"rises {sig['frac_rising']:.2f} of the time"
             else:

@@ -29,9 +29,18 @@ South-coast bias was -0.0553 and stayed -0.0553 through the leak fix. A domain f
 If the open coast shifts, we changed something we did not mean to.
 
 Run:  NJ_ROOT=$PWD PYTHONPATH=$PWD micromamba/envs/sfincs/bin/python scripts/analyze_sealed.py
+Add --with-refs to include the broken-domain reference runs (slower; see BROKEN_REFS).
+
+⚠️ THE NUMBERS MOVE IF YOU RE-RUN AN OLD CSV'S ANALYSIS. tidal_range_metric's window gained a
+12 h spin-up skip (validate.SPINUP_SKIP_H) on 2026-07-20, AFTER the 07-15 CSV was written. The
+skip is the correct behaviour — without it the window reads spin-up drainage as tide — but it
+shifts every tidal number: Shark frac_rising 0.542 -> 0.458 (obs 0.47, so it improved), Shark
+range 1.30 -> 1.36, Shrewsbury 0.99 -> 1.03. Do not read that shift as a model change.
 """
 
 from __future__ import annotations
+
+import sys
 
 import numpy as np
 import pandas as pd
@@ -57,11 +66,19 @@ RUNS = {
     "sealed_faber_waves":      "FABER     sealed   waves",
     "sealed_galibier_nowaves": "GALIBIER  sealed   nowaves",
     "sealed_galibier_waves":   "GALIBIER  sealed   waves",
-    # references, on the OLD (leaking + dammed) domain
+}
+
+# References on the OLD (leaking + dammed) domain. OPT-IN via --with-refs: the premier is
+# settled, so the routine question is now "how do the four sealed candidates compare", and
+# these three carry no cached floodmap (~80 s of downscale each) for an argument that is
+# already won and written up in reports/shrewsbury_investigation.md.
+BROKEN_REFS = {
     "leakfix_extend_waves_25m":   "[ref] leakfix mask-edit   waves",
     "leakfix_extend_nowaves_25m": "[ref] leakfix mask-edit   nowaves",
     "snapwave_tuned_25m":         "[ref] PREMIER (BROKEN)    waves",
 }
+if "--with-refs" in sys.argv:
+    RUNS = {**RUNS, **BROKEN_REFS}
 
 rows = []
 for run, desc in RUNS.items():

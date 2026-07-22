@@ -44,9 +44,11 @@
 > **`sealed_faber_waves` is the adopted premier**, and the leak/dam fixes hold under the full
 > storm, not just the tide-only check:
 >
-> * **Shark River has a tide at last.** All four sealed runs oscillate — frac-rising **0.542**
->   (obs 0.47), range **1.30–1.35 m** (obs 1.52) — where every pre-rebuild run was dead flat
->   (0.00, never oscillated).
+> * **Shark River has a tide at last.** All four sealed runs oscillate — frac-rising **0.458**
+>   (obs 0.47), range **1.36–1.39 m** (obs 1.54) — where every pre-rebuild run was dead flat
+>   (0.00, never oscillated). *(Tidal figures throughout this report were regenerated on
+>   2026-07-22 under the 12 h spin-up skip — see the note at the end of §"Does Shark River have
+>   a tide?". The conclusions are unchanged; several are now closer to observed.)*
 > * **Shrewsbury recovered.** `sealed_faber_waves` puts the gauge at **2.84 m** vs the surveyed
 >   **2.94 m** crest — err **−0.10 m**, the best in the campaign (broken premier was 2.22 / −0.71).
 > * **Faber over Galibier.** The two are bit-identical with waves off; with waves **Galibier
@@ -530,7 +532,7 @@ and only IG.
 | MOTF CSI | 0.706 | 0.704 | −0.002 |
 | MOTF FAR | 0.141 | 0.141 | ~0 |
 | Shrewsbury/Navesink HWM bias | 0.435 | 0.432 | −0.003 |
-| Shark frac-rising | 0.542 | 0.542 | 0 |
+| Shark frac-rising | 0.458 | 0.458 | 0 |
 
 Every number is inside the noise, and every one that moves at all moves *down*. **Infragravity
 is a null lever on this domain**, and unlike the pre-K nulls this one is trustworthy: it was
@@ -598,7 +600,7 @@ the basins that never broke did not move. The oceanfront moved where the plan pr
 should (0.312 → 0.400 under −20), which is the deeper contour acting on the open coast rather
 than coupling into the interior. And the Sandy Hook gauge peak is **identical across all four
 runs** (−0.311 ± 0.002): the boundary depth does not touch the open-coast crest at all. Shark's
-tide holds everywhere (frac-rising 0.542, range 1.30–1.33).
+tide holds everywhere (frac-rising 0.458, range 1.36–1.38).
 
 **The verdict from M.** The boundary contour is **not** the lever for the remaining error. Keep
 `mask_zmin = -10`. The one thing −20 m does prove is that the residual Shrewsbury deficit *can*
@@ -644,9 +646,30 @@ falsifiable test in the project, and the rebuilt model passes it:
 
 | | observed (USGS 01407770) | every run before | **sealed + carved** |
 |---|---|---|---|
-| Shark tidal range, per M2 cycle | **1.52 m** | *none — it never oscillated at all* | **1.331 m** |
-| Shark, fraction of time rising | **0.47** | **0.00** | **0.542** |
-| Shrewsbury tidal range | 1.23 m | 0.716 | **0.996** |
+| Shark tidal range, per M2 cycle | **1.54 m** | *none — it never oscillated at all* | **1.36 m** |
+| Shark, fraction of time rising | **0.47** | **0.00** | **0.458** |
+| Shrewsbury tidal range | 1.28 m | 0.716 † | **1.029** |
+
+> **† Metric-version note (reconciled 2026-07-22).** `tidal_range_metric` gained a 12 h spin-up
+> skip (`validate.SPINUP_SKIP_H`) on 2026-07-20, *after* this report was first written. Without
+> it the window read the model's spin-up drawdown as tide, which deflated every modelled range
+> and inflated frac-rising. The skip is the correct behaviour, and the numbers in this table (and
+> everywhere else in this report) are the **regenerated, post-skip** values. The shift is a
+> measurement change, **not** a model change:
+>
+> | | as first written | regenerated | vs observed |
+> |---|---|---|---|
+> | Shark range | 1.331 | **1.36** | closer (obs 1.54) |
+> | Shark frac-rising | 0.542 | **0.458** | **closer** (obs 0.47) |
+> | Shrewsbury range | 0.996 | **1.029** | closer (obs 1.28) |
+> | observed Shark range | 1.52 | **1.54** | — window moved on the obs too |
+> | observed Shrewsbury range | 1.23 | **1.28** | — |
+>
+> Every regenerated figure moves *toward* the observations, so the argument is strengthened, not
+> weakened. The "every run before" column is the one exception: those broken-domain runs have
+> since been deleted, so **0.716 is a pre-skip number and cannot be regenerated**. It is retained
+> only because the claim it supports — that the dammed basin had *no tide at all* (frac-rising
+> exactly 0.00, a value no window choice can manufacture) — does not depend on the window.
 
 **A basin that had never moved in the entire history of this project now tracks the observed
 tide cycle for cycle** (`reports/figures/gauge_verification.png`: the broken and mask-edit runs
