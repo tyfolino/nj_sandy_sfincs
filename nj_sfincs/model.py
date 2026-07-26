@@ -31,7 +31,7 @@ from hydromt import log
 from hydromt_sfincs import SfincsModel
 from shapely.geometry import Point
 
-from .config import BaseConfig, WaveConfig
+from .config import ROOT, BaseConfig, WaveConfig
 
 # HDF5/netCDF file locking off before any netCDF-backed write on /cache (a failed
 # lock surfaces as a misleading "NetCDF: Permission denied"). Mirrors the notebook.
@@ -43,6 +43,10 @@ os.environ.setdefault("HDF5_USE_FILE_LOCKING", "FALSE")
 BAY_INCLUDE_BOX_LL = (-74.28, 40.40, -73.95, 40.52)
 # Support-point / snapwave-boundary northing cut = the Sandy Hook tip.
 SANDY_HOOK_TIP_Y = 4_476_000
+# Thickness of the seaward ring promoted to SnapWave boundary when the wave
+# domain is decoupled: cells within this many metres of the deep cut become
+# msk==2. Wide enough to give a contiguous ring on a 200 m quadtree edge.
+SNAPWAVE_BND_RING = 5.0
 
 # A free-outflow (Neumann) BC on water deeper than this is a DRAIN, not a boundary.
 OUTFLOW_MAX_DEPTH = -1.0
@@ -342,12 +346,53 @@ def add_waves(wcfg: WaveConfig, base: BaseConfig, sf: SfincsModel) -> dict:
     wavemaker when ``wcfg.wavemaker`` (both no-ops otherwise, so the default
     ``wind_waves`` preset reproduces the notebook byte-for-byte).
     """
-    # X1 SnapWave: the wave solver shares the SFINCS mesh. Overwrite the fresh
-    # snapwave_mask with the SFINCS mask so waves + hydrodynamics use one mesh.
-    sf.quadtree_snapwave_mask.create_active(zmin=base.mask_zmin)
-    sf.quadtree_grid.data["snapwave_mask"] = sf.quadtree_grid.data[
-        "snapwave_mask"
-    ].copy(data=sf.quadtree_grid.data["mask"].values.copy())
+    if wcfg.decouple_snapwave:
+        # DECOUPLED: the wave solver gets its own, DEEPER domain. The SFINCS mask
+        # (and with it the water-level boundary) is left untouched, so tide/surge
+        # forcing stays at the coast while waves are imposed out on the shelf.
+        # The X2 mesh already extends to lon -73.449 / -69 m: ~141k offshore cells
+        # sit inactive purely because BaseConfig.mask_zmin cuts at -10 m.
+        sf.quadtree_snapwave_mask.create_active(
+            zmin=wcfg.snapwave_mask_zmin, copy_sfincsmask=False
+        )
+        # ...but `zmin` alone is NOT the seaward extension we want. create_active
+        # rebuilds from scratch and admits EVERY cell above the threshold inside the
+        # region, so -30 m also sweeps in the inland high ground (10,431 cells, up to
+        # +106 m, lon -74.28..-74.10) that the SFINCS mask excludes by its own
+        # include/exclude criteria. Those are SnapWave-active but SFINCS-INACTIVE and
+        # dry -- precisely the X1 runaway geometry (a wave cell where SFINCS computes
+        # no zs). So take the union we actually meant: everything the coupled premier
+        # had, PLUS only the genuinely submerged band down to snapwave_mask_zmin.
+        _sm = sf.quadtree_grid.data["mask"].values
+        _zz = sf.quadtree_grid.data["z"].values
+        _band = (
+            (sf.quadtree_grid.data["snapwave_mask"].values > 0)
+            & (_sm == 0)
+            & np.isfinite(_zz)
+            & (_zz <= base.mask_zmin)
+        )
+        # Interior is uniformly active (1); create_boundary below promotes the seaward
+        # rim to 2. Copying the SFINCS codes verbatim would import mask==2/3 (the
+        # water-level/outflow boundary at the COAST) as wave-boundary cells, which is
+        # the coupling this arm exists to remove.
+        sf.quadtree_grid.data["snapwave_mask"] = sf.quadtree_grid.data[
+            "snapwave_mask"
+        ].copy(data=np.where((_sm > 0) | _band, 1, 0).astype(_sm.dtype))
+        # Wave boundary = the new SEAWARD edge, not the inherited SFINCS mask==2.
+        # btype="waves" (snapwave's own vocabulary; "waterlevel" is SFINCS-only and
+        # raises here). create_boundary picks cells on the ACTIVE-DOMAIN EDGE that
+        # also satisfy zmax, so this ring is the seaward rim only — the landward
+        # edge is far shallower than the cut and is filtered out.
+        sf.quadtree_snapwave_mask.create_boundary(
+            btype="waves", zmax=wcfg.snapwave_mask_zmin + SNAPWAVE_BND_RING
+        )
+    else:
+        # X1 SnapWave: the wave solver shares the SFINCS mesh. Overwrite the fresh
+        # snapwave_mask with the SFINCS mask so waves + hydrodynamics use one mesh.
+        sf.quadtree_snapwave_mask.create_active(zmin=base.mask_zmin)
+        sf.quadtree_grid.data["snapwave_mask"] = sf.quadtree_grid.data[
+            "snapwave_mask"
+        ].copy(data=sf.quadtree_grid.data["mask"].values.copy())
 
     # Incident-wave boundary = the OPEN-ATLANTIC edge only. Demote every snapwave
     # boundary cell north of the Sandy Hook tip back to active interior, so
@@ -361,12 +406,15 @@ def add_waves(wcfg: WaveConfig, base: BaseConfig, sf: SfincsModel) -> dict:
     ].copy(data=_swm)
 
     # Support points = the DEEP (z<-5), open-Atlantic (y<tip) stretch of the
-    # mask==2 boundary, binned by northing, easternmost (seaward) cell per bin.
+    # boundary, binned by northing, easternmost (seaward) cell per bin.
+    # Decoupled: read the SNAPWAVE boundary (out on the shelf). Coupled: the
+    # SFINCS mask==2 boundary, as X1 left it.
     N = wcfg.wave_n_support
     _fc = sf.quadtree_grid.data.grid.face_coordinates
     _z = sf.quadtree_grid.data["z"].values
+    _bnd_src = "snapwave_mask" if wcfg.decouple_snapwave else "mask"
     _atl = (
-        (sf.quadtree_grid.data["mask"].values == 2)
+        (sf.quadtree_grid.data[_bnd_src].values == 2)
         & np.isfinite(_z)
         & (_z < -5.0)
         & (_fc[:, 1] < SANDY_HOOK_TIP_Y)
@@ -429,6 +477,41 @@ def add_waves(wcfg: WaveConfig, base: BaseConfig, sf: SfincsModel) -> dict:
         "wd": snapwave_wd,
         "ds": snapwave_ds,
     }
+
+
+def set_inp_keys(inp: Path, kv: dict) -> None:
+    """Set/overwrite ``key = value`` lines in a sfincs.inp, appending any that are absent."""
+    lines = Path(inp).read_text().splitlines()
+    have = {ln.split("=")[0].strip() for ln in lines if "=" in ln}
+    out = [
+        f"{ln.split('=')[0].strip():<20} = {kv[ln.split('=')[0].strip()]}"
+        if "=" in ln and ln.split("=")[0].strip() in kv
+        else ln
+        for ln in lines
+    ]
+    out += [f"{k:<20} = {v}" for k, v in kv.items() if k not in have]
+    Path(inp).write_text("\n".join(out) + "\n")
+
+
+def restore_diagnostics(model_dir: Path) -> None:
+    """Re-enable the flux/mass-budget diagnostics that ``sf.write()`` drops.
+
+    hydromt's writer knows nothing about ``crsfile`` (cross-sections) or ``storevel``, so a
+    freshly staged experiment silently comes back with no cross-sections and ``storevel = 0``
+    — i.e. no mass budget, and an inp that differs from the premier's for reasons that have
+    nothing to do with the experiment. Both phase-lag arms had to be hand-patched before
+    submission because of this; ``scripts/setup_sealed_premier.py`` carried the only copy of
+    the fix. Call this after :func:`finalize` on every staging path.
+    """
+    model_dir = Path(model_dir)
+    crs_src = ROOT / "data" / "flux_crosssections.crs"
+    kv = {"storevel": "1"}
+    if crs_src.exists():
+        shutil.copy2(crs_src, model_dir / "sfincs.crs")
+        kv["crsfile"] = "sfincs.crs"
+    else:  # never point crsfile at a file the solver cannot open
+        print(f"[warn] {crs_src} missing — staging without cross-sections")
+    set_inp_keys(model_dir / "sfincs.inp", kv)
 
 
 def finalize(

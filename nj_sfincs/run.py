@@ -83,7 +83,8 @@ def run_sfincs(model_root, sif: str | None = None):
 
 
 def submit_slurm(model_dir, sif: str | None = None,
-                 slurm_script: Path | None = None) -> str | None:
+                 slurm_script: Path | None = None,
+                 extra_args: list[str] | None = None) -> str | None:
     """Submit one SFINCS solve via ``sbatch hpc/sfincs_run.slurm <model_dir>``.
 
     The batch script runs relative to the submit dir (= repo root), so we sbatch
@@ -114,9 +115,14 @@ def submit_slurm(model_dir, sif: str | None = None,
     except ValueError:
         model_arg = str(model_abs)
 
+    # sbatch CLI flags override the #SBATCH directives in the script, so this is the
+    # way to give one job a longer wall clock (e.g. ["--time=06:00:00"]) without
+    # editing the shared batch script for every future run.
+    cmd = ["sbatch", *(extra_args or []), str(slurm_script), model_arg]
+    if extra_args:
+        print(f"[slurm] sbatch overrides: {' '.join(extra_args)}")
     proc = subprocess.run(
-        ["sbatch", str(slurm_script), model_arg],
-        cwd=str(ROOT), capture_output=True, text=True, env=env,
+        cmd, cwd=str(ROOT), capture_output=True, text=True, env=env,
     )
     print(proc.stdout.strip() or proc.stderr.strip())
     if proc.returncode != 0:

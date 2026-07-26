@@ -144,6 +144,9 @@ def prepare_experiment(name: str, base: BaseConfig) -> Path:
         )
     sw = model.add_waves(exp.waves, base, sf) if exp.waves.use_waves else None
     model.finalize(exp.waves, base, sf, exp_dir, sw)
+    # hydromt's writer drops crsfile/storevel; put them back so a staged arm carries the
+    # same diagnostics as the sealed premier and the inp-diff stays honest.
+    model.restore_diagnostics(exp_dir)
     del sf
     gc.collect()
     return exp_dir

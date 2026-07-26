@@ -150,6 +150,25 @@ class WaveConfig:
     wave_geodataset: str = "era5_waves_nj"
     wave_era5_node: tuple[float, float] = (-74.0, 40.0)  # nearest valid offshore node
     wave_n_support: int = 7  # alongshore support points on the boundary
+
+    # ── SnapWave / SFINCS boundary DECOUPLING (2026-07-22) ───────────────────
+    # X1 forced the wave solver onto the SFINCS mesh, which pinned the wave
+    # boundary to the WATER-LEVEL boundary at BaseConfig.mask_zmin = -10 m. ERA5
+    # is a deep-water source, so that pastes the open-ocean sea state onto the
+    # 10 m contour with NO shelf transformation: at Sandy's peak ERA5 imposes
+    # 7.66 m at 10 m depth while NDBC 44025 measured 8.79 m out in 36 m — i.e.
+    # essentially the same number, 26 m of depth too shallow. CORA's SWAN, which
+    # resolves the shelf, says 3.5-4.8 m there.
+    #
+    # Setting decouple_snapwave lets the SnapWave mask run out to
+    # ``snapwave_mask_zmin`` while the SFINCS mask (and therefore the tide/surge
+    # boundary) stays exactly where it is. This is seal-safe: premier.py
+    # deliberately EXCLUDES snapwave_mask from the domain hash, so the sealed
+    # fingerprint is unchanged and only one variable moves.
+    #
+    # Default False => every existing arm reproduces byte-for-byte.
+    decouple_snapwave: bool = False
+    snapwave_mask_zmin: float = -30.0  # SnapWave-only depth cut [m]
     wavemaker_line: Path = DATA / "wavemakers" / "wavemaker_line.geojson"
     dtwave: float = 1800.0  # SnapWave coupling interval [s]
 
@@ -290,11 +309,14 @@ EXPERIMENTS: dict[str, Experiment] = {
     # (corr 0.996, zero lag) across the mid-storm gap. Validated vs SH 6-min obs:
     # RMSE 0.103 m and pre-storm phase error 0 min, against 0.147 m / 24 min for the
     # Battery-anchored baseline. No extrapolation anywhere.
+    # ⛔ RETIRED 2026-07-26 — superseded by `phaselag_shift`. Run dir DELETED; the boundary
+    # forcing file is preserved at archive/retired_composites/phaselag_composite/ and the
+    # scored result at reports/phaselag_composite.csv. Do NOT re-run. See the v2 block below.
     "phaselag_composite": Experiment(
         "phaselag_composite",
         WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
-        "NOAA harmonic tide + non-tidal residual (noaa_sandy_composite). Fixes the "
-        "boundary tide phase without touching the surge field — one variable changed.",
+        "⛔ RETIRED — NOAA harmonic tide + NTR (noaa_sandy_composite), 3 support points. "
+        "Fixed the phase but over-forced the coast. Superseded by phaselag_shift.",
         waterlevel_geodataset="noaa_sandy_composite",
     ),
     # ⭐ v2 (2026-07-22) — the arm that actually isolates PHASE from LEVEL.
@@ -307,12 +329,158 @@ EXPERIMENTS: dict[str, Experiment] = {
     # ON the existing surge line: 3.143 m vs the 3.146 m the premier's 2-node line already
     # implied there (-0.004 m), where v1 sat at +0.243 m. Source phase still -3.3 min vs the
     # premier's +21.1. No fitted parameter anywhere.
+    #
+    # ⛔ RETIRED 2026-07-26 — BOTH COMPOSITES ARE DEAD. `phaselag_shift` beats them on phase
+    # AND level simultaneously (SH lag -0.1 vs 6.7 min; HWM bias 0.302 vs 0.500; RMSE 0.466 vs
+    # 0.606; within-0.5 74% vs 63%; SSS 2258 3.626 vs 3.837 against an observed 3.465).
+    # Two independent reasons not to build a v3:
+    #  1. v2's node was NOT on the line after all. Reconstructing SFINCS' own interpolation with
+    #     cadence held constant (2-node interpolant built from v2's OWN Battery+AC columns), the
+    #     node contributes +0.012 m at its own latitude but +0.049 m at Shark River — it sits on
+    #     the line at the surge PEAK, which is all that was ever verified, while its re-phased
+    #     TIDE puts it off the line at other times, so the interpolated max between nodes rises.
+    #     The off-line error is downstream of the node, not at it. (Cadence is also NOT the
+    #     +0.008 m recorded from a single latitude: it is +0.050 m mid-coast and south.)
+    #  2. The geographic argument for a Sandy Hook node is independently closed. CORA compared
+    #     against a linear interpolation built from CORA at the same two points (so its own bias
+    #     cancels): linear interpolation is NOT a meaningful error source on the open coast. The
+    #     node has nothing left to do — phase is fixed without it, and the level is not broken.
+    # A v3 could only tune the node's LEVEL to chase HWM bias, with no independent constraint on
+    # what that level should be (the Sandy Hook gauge died before the crest) — i.e. calibration,
+    # the same circularity that got NTR_DONOR_SCALE rejected. Run dir DELETED; boundary file at
+    # archive/retired_composites/phaselag_composite_v2/, result at reports/phaselag_composite_v2.csv.
     "phaselag_composite_v2": Experiment(
         "phaselag_composite_v2",
         WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
-        "Local harmonic tide + spatially interpolated NTR (noaa_sandy_composite_v2). "
-        "Re-phases the boundary tide while leaving the surge field as the premier had it.",
+        "⛔ RETIRED — local harmonic tide + interpolated NTR (noaa_sandy_composite_v2), "
+        "3 support points. Superseded by phaselag_shift; do not re-run.",
         waterlevel_geodataset="noaa_sandy_composite_v2",
+    ),
+    # Phase fix done the way the plan's §5 actually specified — re-phase the EXISTING
+    # north anchor rather than inserting a node. 2 support points, same coordinates and
+    # same hourly grid as the premier; the Battery's TIDE is advanced +24 min to
+    # open-coast phase and every NTR is left alone. Because no node is inserted, nothing
+    # can sit off the Battery->AC surge line, which is exactly how v2 leaked +0.051 m
+    # into a barrier-overwash threshold and lost the HWM score. One variable vs the
+    # premier: tidal TIMING.
+    "phaselag_shift": Experiment(
+        "phaselag_shift",
+        WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
+        "Battery tide advanced +24 min to open-coast phase, 2 support points, NTR "
+        "untouched. The phase-only experiment the composites were meant to be.",
+        waterlevel_geodataset="noaa_sandy_phaseshift",
+    ),
+    # ── SnapWave boundary decoupling (2026-07-22) ────────────────────────────
+    # The premier imposes ERA5 DEEP-WATER waves at the ~10 m contour, because X1
+    # pinned the wave boundary to the water-level boundary and mask_zmin cuts at
+    # -10 m. Evidence it is wrong, from observations rather than argument: at
+    # 10-30 00:00 NDBC 44025 measured 8.79 m in 36 m of water while ERA5 imposes
+    # 7.82 m in 10 m of water — the same sea state, 26 m too shallow. CORA's SWAN
+    # (which resolves the shelf) says 5.07-6.02 m there.
+    #
+    # This arm gives SnapWave its own domain out to the 30 m contour (+129k of the
+    # 141k already-meshed but inactive offshore cells) and leaves the SFINCS mask,
+    # the surge boundary and the sealed fingerprint untouched. One variable vs
+    # sealed_faber_waves. Expected direction: less boundary wave energy -> less
+    # setup -> HWM bias down from +0.32 (the premier is too WET, so this pushes
+    # the right way, unlike phaselag_composite which overshot to +0.73).
+    "snapwave_deep": Experiment(
+        "snapwave_deep",
+        WaveConfig(
+            use_waves=True,
+            wave_wind=True,
+            wave_igwaves=False,
+            tune_physics=True,
+            decouple_snapwave=True,
+            snapwave_mask_zmin=-30.0,
+        ),
+        "Premier wave knobs with the SnapWave domain decoupled from the SFINCS "
+        "mask and pushed to the 30 m contour, so ERA5's deep-water Hs is applied "
+        "where it is actually valid and SnapWave does the shelf transformation.",
+        waterlevel_geodataset=None,
+    ),
+    # The 4th cell of the 2x2. The other three are already run: sealed_faber_waves
+    # (neither), phaselag_composite_v2 (phase only), snapwave_deep (waves only).
+    # The two knobs are orthogonal — `waves` touches only snapwave_mask, and
+    # `waterlevel_geodataset` only sfincs_netbndbzsbzifile.nc — so this arm is
+    # exactly their combination and the factorial closes.
+    #
+    # It exists because the phase result is NOT separable from the level. v2 kept
+    # the phase win (SH 17.6 -> 6.7 min) but left HWM bias at +0.50 vs the premier's
+    # +0.32, and since v2's boundary node sits ON the existing surge line by
+    # construction, that residual is the re-phased tide aligning constructively with
+    # the surge — not boundary geometry. The open question is whether the premier
+    # was getting a defensible level for the WRONG reason: a late tide de-tuning an
+    # over-energetic wave forcing. If snapwave_deep lowers the level, the phase fix
+    # may come free here. Only this cell can show the interaction; the three
+    # existing runs cannot.
+    #
+    # Carries the same 6-min-vs-hourly forcing cadence lift as the other composite
+    # arms (+0.021 m at Battery, +0.038 m at AC), so the clean single-variable
+    # comparison for phase is THIS vs snapwave_deep, not vs the premier.
+    "snapwave_deep_composite_v2": Experiment(
+        "snapwave_deep_composite_v2",
+        WaveConfig(
+            use_waves=True,
+            wave_wind=True,
+            wave_igwaves=False,
+            tune_physics=True,
+            decouple_snapwave=True,
+            snapwave_mask_zmin=-30.0,
+        ),
+        "⛔ SUPERSEDED (v2 retired 2026-07-26) — SnapWave decoupled to 30 m AND the "
+        "composite_v2 boundary tide. Retained as the 2x2 interaction evidence; use "
+        "snapwave_deep_phaseshift instead.",
+        waterlevel_geodataset="noaa_sandy_composite_v2",
+    ),
+    # ── The production candidate (2026-07-26) ────────────────────────────────
+    # snapwave_deep's wave knobs + phaselag_shift's boundary forcing. Both knobs
+    # are orthogonal in this config — `waves` touches only snapwave_mask, and
+    # `waterlevel_geodataset` only sfincs_netbndbzsbzifile.nc — so this arm is
+    # exactly their union.
+    #
+    # NOTE `phaselag_shift` already carries snapwave_mask_zmin=-30.0, but with
+    # decouple_snapwave=False that value is INERT: the flag is what activates it.
+    # So the two parents differ in exactly one field each and this is their union.
+    #
+    # Why it is worth the 3 h. Each parent beats the premier on its own axis for a
+    # reason that survives independently of the HWM score:
+    #   * phaselag_shift  — Sandy Hook lag 17.6 -> -0.1 min at NO level cost
+    #     (bias 0.318 -> 0.302). The +24 min Battery phase is an interpolation
+    #     artifact, measured at the source, not a fitted correction.
+    #   * snapwave_deep   — the premier imposes Hs 8.624 m at the ~10 m contour,
+    #     ABOVE the depth-limited breaking cap (gamma=0.78 => ~7.8 m in 10 m of
+    #     water). That BC is physically inadmissible. This arm imposes the SAME
+    #     8.624 m at ~30 m (gamma 0.29) where it is valid; faces past breaking
+    #     drop 16,532 -> 13,651 (-17%).
+    # So this run is mainly a CONFIRMATION that the two do not interfere, not a
+    # search for a large gain. Expect HWM bias ~0.27 if they compose; that is
+    # success. Neither knob addresses the +0.32 m wet bias and this one will not
+    # either.
+    #
+    # Do NOT read a null result as "the phase fix costs something": the 2x2 already
+    # showed deep+composite_v2 kept v2's ~+0.14 penalty, but that was a verdict on
+    # v2's INSERTED NODE (off the surge line by +0.049 m at Shark River), and this
+    # arm has no node. Interaction is nonetheless not guaranteed to be additive.
+    #
+    # Runtime: SnapWave is 90-95% of the cost and scales PER-ITERATION with the
+    # decoupled domain (6.18 s/iter vs the premier's 3.95). Both deep runs took
+    # 3:03-3:05 => submit with extra_args=['--time=06:00:00'], the 3 h batch
+    # default would kill it.
+    "snapwave_deep_phaseshift": Experiment(
+        "snapwave_deep_phaseshift",
+        WaveConfig(
+            use_waves=True,
+            wave_wind=True,
+            wave_igwaves=False,
+            tune_physics=True,
+            decouple_snapwave=True,
+            snapwave_mask_zmin=-30.0,
+        ),
+        "PRODUCTION CANDIDATE: SnapWave decoupled to the 30 m contour (admissible "
+        "wave BC) AND the Battery tide advanced +24 min at 2 support points "
+        "(no inserted node). The union of the two best arms.",
+        waterlevel_geodataset="noaa_sandy_phaseshift",
     ),
 }
 
