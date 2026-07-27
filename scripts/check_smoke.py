@@ -1,7 +1,7 @@
 #!/usr/bin/env python
 """Premier-relative smoke gate for a short-window SFINCS/SnapWave arm.
 
-    python scripts/check_smoke.py experiments/<arm>_smoke [--control experiments/sealed_faber_waves]
+    python scripts/check_smoke.py experiments/<arm>_smoke [--control experiments/faber-waves-premier]
 
 Why this is written the way it is
 ---------------------------------
@@ -44,7 +44,7 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("arm", type=Path)
     ap.add_argument("--control", type=Path,
-                    default=Path("experiments/sealed_faber_waves"))
+                    default=Path("experiments/faber-waves-premier"))
     ap.add_argument("--spinup-hours", type=float, default=WAVE_SPINUP_HOURS)
     a = ap.parse_args()
 

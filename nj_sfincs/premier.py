@@ -45,7 +45,7 @@ config, so folding it in would make no-waves and waves arms of the same domain d
 Audit any directory::
 
     NJ_ROOT=$PWD PYTHONPATH=$PWD micromamba/envs/sfincs/bin/python -m nj_sfincs.premier \\
-        experiments/sealed_faber_waves experiments/phaselag_battery
+        experiments/faber-waves-premier experiments/tide-shift
 """
 
 from __future__ import annotations
@@ -65,7 +65,9 @@ from nj_sfincs.config import ROOT
 
 #: The adopted premier (Workstream O, 2026-07-14). Gauge err -0.10 m vs the surveyed
 #: crest; MOTF CSI 0.64, FAR 0.14. Faber engine + SnapWave + wind, on the sealed domain.
-PREMIER_NAME = "sealed_faber_waves"
+#: Renamed from ``sealed_faber_waves`` on 2026-07-27; see ``docs/naming.md``.
+PREMIER_NAME = "faber-waves-premier"
+PREMIER_LEGACY_NAME = "sealed_faber_waves"
 
 #: The ONLY template new experiments may be staged from.
 SEALED_TEMPLATE = ROOT / "experiments" / "_template_sealed"

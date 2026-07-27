@@ -203,12 +203,19 @@ class Experiment:
     this field is a clean forcing A/B. Faber vs Galibier is NOT a knob here: it is
     the SFINCS container (``sfincs-desktop.sif`` = Faber, the default
     ``BaseConfig.container_sif``), so every run below is Faber.
+
+    ``legacy_name`` is the pre-2026-07-27 name of a renamed arm, kept so the old
+    vocabulary stays greppable and so anything citing it (memory files, plan files,
+    older report CSVs) can still be resolved. See ``docs/naming.md`` for the
+    convention and the full mapping. Retired arms were NOT renamed — their value is
+    archival — so their ``legacy_name`` is None.
     """
 
     name: str
     waves: WaveConfig
     description: str = ""
     waterlevel_geodataset: str | None = None
+    legacy_name: str | None = None
 
 
 # ── The experiment library the runner sweeps over ────────────────────────────
@@ -309,14 +316,14 @@ EXPERIMENTS: dict[str, Experiment] = {
     # (corr 0.996, zero lag) across the mid-storm gap. Validated vs SH 6-min obs:
     # RMSE 0.103 m and pre-storm phase error 0 min, against 0.147 m / 24 min for the
     # Battery-anchored baseline. No extrapolation anywhere.
-    # ⛔ RETIRED 2026-07-26 — superseded by `phaselag_shift`. Run dir DELETED; the boundary
+    # ⛔ RETIRED 2026-07-26 — superseded by `tide-shift`. Run dir DELETED; the boundary
     # forcing file is preserved at archive/retired_composites/phaselag_composite/ and the
     # scored result at reports/phaselag_composite.csv. Do NOT re-run. See the v2 block below.
     "phaselag_composite": Experiment(
         "phaselag_composite",
         WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
         "⛔ RETIRED — NOAA harmonic tide + NTR (noaa_sandy_composite), 3 support points. "
-        "Fixed the phase but over-forced the coast. Superseded by phaselag_shift.",
+        "Fixed the phase but over-forced the coast. Superseded by tide-shift.",
         waterlevel_geodataset="noaa_sandy_composite",
     ),
     # ⭐ v2 (2026-07-22) — the arm that actually isolates PHASE from LEVEL.
@@ -330,7 +337,7 @@ EXPERIMENTS: dict[str, Experiment] = {
     # implied there (-0.004 m), where v1 sat at +0.243 m. Source phase still -3.3 min vs the
     # premier's +21.1. No fitted parameter anywhere.
     #
-    # ⛔ RETIRED 2026-07-26 — BOTH COMPOSITES ARE DEAD. `phaselag_shift` beats them on phase
+    # ⛔ RETIRED 2026-07-26 — BOTH COMPOSITES ARE DEAD. `tide-shift` beats them on phase
     # AND level simultaneously (SH lag -0.1 vs 6.7 min; HWM bias 0.302 vs 0.500; RMSE 0.466 vs
     # 0.606; within-0.5 74% vs 63%; SSS 2258 3.626 vs 3.837 against an observed 3.465).
     # Two independent reasons not to build a v3:
@@ -353,7 +360,7 @@ EXPERIMENTS: dict[str, Experiment] = {
         "phaselag_composite_v2",
         WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
         "⛔ RETIRED — local harmonic tide + interpolated NTR (noaa_sandy_composite_v2), "
-        "3 support points. Superseded by phaselag_shift; do not re-run.",
+        "3 support points. Superseded by tide-shift; do not re-run.",
         waterlevel_geodataset="noaa_sandy_composite_v2",
     ),
     # Phase fix done the way the plan's §5 actually specified — re-phase the EXISTING
@@ -363,12 +370,13 @@ EXPERIMENTS: dict[str, Experiment] = {
     # can sit off the Battery->AC surge line, which is exactly how v2 leaked +0.051 m
     # into a barrier-overwash threshold and lost the HWM score. One variable vs the
     # premier: tidal TIMING.
-    "phaselag_shift": Experiment(
-        "phaselag_shift",
+    "tide-shift": Experiment(
+        "tide-shift",
         WaveConfig(use_waves=True, wave_wind=True, wave_igwaves=False, tune_physics=True),
         "Battery tide advanced +24 min to open-coast phase, 2 support points, NTR "
         "untouched. The phase-only experiment the composites were meant to be.",
         waterlevel_geodataset="noaa_sandy_phaseshift",
+        legacy_name="phaselag_shift",
     ),
     # ── SnapWave boundary decoupling (2026-07-22) ────────────────────────────
     # The premier imposes ERA5 DEEP-WATER waves at the ~10 m contour, because X1
@@ -381,11 +389,11 @@ EXPERIMENTS: dict[str, Experiment] = {
     # This arm gives SnapWave its own domain out to the 30 m contour (+129k of the
     # 141k already-meshed but inactive offshore cells) and leaves the SFINCS mask,
     # the surge boundary and the sealed fingerprint untouched. One variable vs
-    # sealed_faber_waves. Expected direction: less boundary wave energy -> less
+    # faber-waves-premier. Expected direction: less boundary wave energy -> less
     # setup -> HWM bias down from +0.32 (the premier is too WET, so this pushes
     # the right way, unlike phaselag_composite which overshot to +0.73).
-    "snapwave_deep": Experiment(
-        "snapwave_deep",
+    "wave-deep30": Experiment(
+        "wave-deep30",
         WaveConfig(
             use_waves=True,
             wave_wind=True,
@@ -396,8 +404,12 @@ EXPERIMENTS: dict[str, Experiment] = {
         ),
         "Premier wave knobs with the SnapWave domain decoupled from the SFINCS "
         "mask and pushed to the 30 m contour, so ERA5's deep-water Hs is applied "
-        "where it is actually valid and SnapWave does the shelf transformation.",
+        "where it is actually valid and SnapWave does the shelf transformation. "
+        "Same lever as wave-bnd15/wave-bnd20 at a deeper value, but a DIFFERENT "
+        "mechanism: those move support points inside the coupled mask, this one "
+        "decouples the mask itself.",
         waterlevel_geodataset=None,
+        legacy_name="snapwave_deep",
     ),
     # The 4th cell of the 2x2. The other three are already run: sealed_faber_waves
     # (neither), phaselag_composite_v2 (phase only), snapwave_deep (waves only).
@@ -467,8 +479,8 @@ EXPERIMENTS: dict[str, Experiment] = {
     # decoupled domain (6.18 s/iter vs the premier's 3.95). Both deep runs took
     # 3:03-3:05 => submit with extra_args=['--time=06:00:00'], the 3 h batch
     # default would kill it.
-    "snapwave_deep_phaseshift": Experiment(
-        "snapwave_deep_phaseshift",
+    "wave-deep30+tide-shift": Experiment(
+        "wave-deep30+tide-shift",
         WaveConfig(
             use_waves=True,
             wave_wind=True,
@@ -479,8 +491,12 @@ EXPERIMENTS: dict[str, Experiment] = {
         ),
         "PRODUCTION CANDIDATE: SnapWave decoupled to the 30 m contour (admissible "
         "wave BC) AND the Battery tide advanced +24 min at 2 support points "
-        "(no inserted node). The union of the two best arms.",
+        "(no inserted node). The union of the two best arms. SCORED 2026-07-27: "
+        "bias 0.273 / RMSE 0.449, the best level arm; the two knobs are ~additive "
+        "(RMSE 100%). But CSI 0.706 -> 0.684 and one wet HWM goes dry -- best on "
+        "level, worst on extent. See docs/naming.md.",
         waterlevel_geodataset="noaa_sandy_phaseshift",
+        legacy_name="snapwave_deep_phaseshift",
     ),
 }
 

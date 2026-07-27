@@ -62,11 +62,19 @@ CRS_SRC = ROOT / "data" / "flux_crosssections.crs"
 COPY_FILES = {"sfincs.inp"}
 
 # waves ON = the premier's own settings; OFF = the still-water control.
+# Renamed 2026-07-27 (see docs/naming.md). The `sealed_` prefix was dropped: every arm in
+# this repo is on the sealed domain, so it distinguished nothing. This 2x2 keeps factorial
+# names (<solver>-<waves>) because it IS one designed experiment; arms added later are
+# named as deltas from the premier instead (wave-*, tide-*, bed-*).
 ARMS = {
-    "sealed_faber_waves":      dict(sif="sfincs-desktop.sif", waves=True,  gammax=None),
-    "sealed_faber_nowaves":    dict(sif="sfincs-desktop.sif", waves=False, gammax=None),
-    "sealed_galibier_waves":   dict(sif="sfincs-cpu.sif",     waves=True,  gammax="2.0"),
-    "sealed_galibier_nowaves": dict(sif="sfincs-cpu.sif",     waves=False, gammax="2.0"),
+    "faber-waves-premier": dict(sif="sfincs-desktop.sif", waves=True,  gammax=None,
+                                legacy="sealed_faber_waves"),
+    "faber-nowaves":       dict(sif="sfincs-desktop.sif", waves=False, gammax=None,
+                                legacy="sealed_faber_nowaves"),
+    "galibier-waves":      dict(sif="sfincs-cpu.sif",     waves=True,  gammax="2.0",
+                                legacy="sealed_galibier_waves"),
+    "galibier-nowaves":    dict(sif="sfincs-cpu.sif",     waves=False, gammax="2.0",
+                                legacy="sealed_galibier_nowaves"),
 }
 DIAG = {"crsfile": "sfincs.crs", "storevel": "1"}
 

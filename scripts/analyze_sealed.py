@@ -62,10 +62,10 @@ OBS_TIDE_SHREWS = 1.23     # USGS 01407600, same
 OBS_FRAC_RISING = 0.47     # a real tide rises about half the time; a dammed basin, never
 
 RUNS = {
-    "sealed_faber_nowaves":    "FABER     sealed   nowaves",
-    "sealed_faber_waves":      "FABER     sealed   waves",
-    "sealed_galibier_nowaves": "GALIBIER  sealed   nowaves",
-    "sealed_galibier_waves":   "GALIBIER  sealed   waves",
+    "faber-nowaves":     "FABER     sealed   nowaves",
+    "faber-waves-premier": "FABER   sealed   waves    <- PREMIER",
+    "galibier-nowaves":  "GALIBIER  sealed   nowaves",
+    "galibier-waves":    "GALIBIER  sealed   waves",
 }
 
 # References on the OLD (leaking + dammed) domain. OPT-IN via --with-refs: the premier is

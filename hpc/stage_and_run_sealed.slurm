@@ -53,10 +53,10 @@ echo
 echo "=== submitting the 2x2 ==="
 # nowaves first: they finish in ~10 min and answer the Shark-tide question before the
 # 4-hour wave arms are even warm.
-SFINCS_SIF=$PROJ/sfincs-desktop.sif sbatch --time=00:40:00 hpc/sfincs_run.slurm experiments/sealed_faber_nowaves
-SFINCS_SIF=$PROJ/sfincs-cpu.sif     sbatch --time=00:40:00 hpc/sfincs_run.slurm experiments/sealed_galibier_nowaves
-SFINCS_SIF=$PROJ/sfincs-desktop.sif sbatch --time=04:00:00 hpc/sfincs_run.slurm experiments/sealed_faber_waves
-SFINCS_SIF=$PROJ/sfincs-cpu.sif     sbatch --time=04:00:00 hpc/sfincs_run.slurm experiments/sealed_galibier_waves
+SFINCS_SIF=$PROJ/sfincs-desktop.sif sbatch --time=00:40:00 hpc/sfincs_run.slurm experiments/faber-nowaves
+SFINCS_SIF=$PROJ/sfincs-cpu.sif     sbatch --time=00:40:00 hpc/sfincs_run.slurm experiments/galibier-nowaves
+SFINCS_SIF=$PROJ/sfincs-desktop.sif sbatch --time=04:00:00 hpc/sfincs_run.slurm experiments/faber-waves-premier
+SFINCS_SIF=$PROJ/sfincs-cpu.sif     sbatch --time=04:00:00 hpc/sfincs_run.slurm experiments/galibier-waves
 
 echo
 echo "submitted. when they land:"
